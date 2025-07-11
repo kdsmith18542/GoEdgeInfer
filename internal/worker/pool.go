@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/persistence"
-	"github.com/keith/goedgeinfer/pkg/logging"
-	"github.com/keith/goedgeinfer/pkg/metrics"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/persistence"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -24,7 +24,7 @@ type Task struct {
 // PipelineRunner allows injection of custom pipeline logic for testability
 // (You can generate a mock if you use mockgen)
 //
-//go:generate mockgen -destination=../../mocks/mock_processing.go -package=mocks github.com/keith/goedgeinfer/internal/worker PipelineRunner
+//go:generate mockgen -destination=../../mocks/mock_processing.go -package=mocks github.com/kdsmith18542/GoEdgeInfer/internal/worker PipelineRunner
 type PipelineRunner interface {
 	Run(input interface{}) (interface{}, error)
 }

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/model"
-	"github.com/keith/goedgeinfer/internal/worker"
-	"github.com/keith/goedgeinfer/proto"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/worker"
+	"github.com/kdsmith18542/GoEdgeInfer/proto"
 	"go.opentelemetry.io/otel/trace"
 )
 

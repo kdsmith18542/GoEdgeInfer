@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/keith/goedgeinfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
 	"go.opentelemetry.io/otel/trace"
 )
 

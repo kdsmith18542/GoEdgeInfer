@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/keith/goedgeinfer/internal/config"
-	"github.com/keith/goedgeinfer/internal/middleware"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )

@@ -1,4 +1,4 @@
-module github.com/keith/goedgeinfer
+module github.com/kdsmith18542/GoEdgeInfer
 
 go 1.23.0
 

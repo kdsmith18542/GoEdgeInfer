@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/keith/goedgeinfer/internal/app"
-	"github.com/keith/goedgeinfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/app"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
 )
 
 // Run is the main entrypoint for the server. It is factored out for testability.

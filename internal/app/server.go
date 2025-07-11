@@ -14,12 +14,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/keith/goedgeinfer/internal/api"
-	"github.com/keith/goedgeinfer/internal/config"
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/persistence"
-	"github.com/keith/goedgeinfer/internal/processing"
-	"github.com/keith/goedgeinfer/internal/worker"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/api"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/grpcapi"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/persistence"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/processing"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/worker"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/proto"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -29,6 +32,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type Server struct {
@@ -41,6 +45,7 @@ type Server struct {
 	ServerErrors chan error
 	ShutdownCh   chan os.Signal
 	Config       *config.Config
+	Logger       *zap.Logger
 }
 
 // newExporter returns a console exporter.
@@ -112,11 +117,7 @@ func (m *defaultModelManager) ListModels() []string {
 }
 
 // GetModelInfo returns information about a specific model
-func (m *defaultModelManager) GetModelInfo(ctx context.Context, modelID, version string) (interface{}, error) {
-	// Create a new span for tracing
-	_, span := trace.SpanFromContext(ctx).TracerProvider().Tracer("").Start(ctx, "GetModelInfo")
-	defer span.End()
-
+func (m *defaultModelManager) GetModelInfo(modelID, version string) (interface{}, error) {
 	// In a real implementation, you would fetch this from your model storage
 	// This is a simplified example
 	return map[string]interface{}{
@@ -193,6 +194,12 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("Failed to initialize processing pipeline: %w", err)
 	}
 
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer logger.Sync()
+
 	logging.Info("Initializing ONNX Runtime inference engine...")
 	engine, err := inference.NewONNXRuntimeEngine()
 	if err != nil {
@@ -208,12 +215,12 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 	workerPool.RecoverFromPersistentQueue()
 
 	reloadCh := make(chan struct{}, 1)
-	
+
 	// Create a default model manager
 	modelMgr := &defaultModelManager{engine: engine}
-	
+
 	// Initialize logger
-	logger, err := zap.NewProduction()
+	logger, err = zap.NewProduction()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -262,7 +269,7 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 		}()
 	} else {
 		go func() {
-			logging.Info(fmt.Sprintf("Server listening on %s", srv.Addr))
+			logger.Info(fmt.Sprintf("Server listening on %s", srv.Addr))
 			serverErrors <- srv.ListenAndServe()
 		}()
 	}
@@ -271,13 +278,13 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 	go func() {
 		lis, err := net.Listen("tcp", grpcAddr)
 		if err != nil {
-			logging.Fatal("Failed to listen for gRPC", "error", err)
+			logger.Fatal("Failed to listen for gRPC", zap.Error(err))
 		}
 		grpcServer := grpc.NewServer()
 		proto.RegisterGoEdgeInferServiceServer(grpcServer, grpcapi.NewServer(engine, workerPool))
-		logging.Info(fmt.Sprintf("gRPC server listening on %s", grpcAddr))
+		logger.Info(fmt.Sprintf("gRPC server listening on %s", grpcAddr))
 		if err := grpcServer.Serve(lis); err != nil {
-			logging.Fatal("gRPC server error", "error", err)
+			logger.Fatal("gRPC server error", zap.Error(err))
 		}
 	}()
 
@@ -294,6 +301,7 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 		ServerErrors: serverErrors,
 		ShutdownCh:   shutdownCh,
 		Config:       cfg,
+		Logger:       logger,
 	}, nil
 }
 
@@ -306,27 +314,27 @@ func (s *Server) Start() {
 	for {
 		select {
 		case err := <-s.ServerErrors:
-			logging.Fatal(fmt.Sprintf("Server error: %v", err))
+			s.Logger.Fatal(fmt.Sprintf("Server error: %v", err))
 		case sig := <-s.ShutdownCh:
-			logging.Info(fmt.Sprintf("Received %v signal. Starting graceful shutdown...", sig))
+			s.Logger.Info(fmt.Sprintf("Received %v signal. Starting graceful shutdown...", sig))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := s.HTTPServer.Shutdown(ctx); err != nil {
 				s.ShutdownCh <- os.Interrupt
-				logging.Error(fmt.Sprintf("Graceful shutdown did not complete in 30s: %v", err))
+				s.Logger.Error(fmt.Sprintf("Graceful shutdown did not complete in 30s: %v", err))
 			}
 			s.WorkerPool.Shutdown()
-			logging.Info("Server gracefully stopped")
+			s.Logger.Info("Server gracefully stopped")
 			return
 		case <-s.ReloadCh:
-			logging.Info("Reloading configuration and pipeline...")
+			s.Logger.Info("Reloading configuration and pipeline...")
 			cfg := config.Load()
 			newPipeline, err := processing.NewPipelineFromConfig(cfg.Pipeline)
 			if err != nil {
-				logging.Error("Failed to reload processing pipeline", "error", err)
+				s.Logger.Error("Failed to reload processing pipeline", zap.Error(err))
 			} else {
 				s.WorkerPool.UpdatePipeline(newPipeline)
-				logging.Info("Pipeline reloaded successfully")
+				s.Logger.Info("Pipeline reloaded successfully")
 			}
 		}
 	}

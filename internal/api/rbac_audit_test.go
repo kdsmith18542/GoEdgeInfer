@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/keith/goedgeinfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
 )
 
 func TestMgmtRBAC_AdminAllowed(t *testing.T) {

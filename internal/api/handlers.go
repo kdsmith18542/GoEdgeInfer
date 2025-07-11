@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/keith/goedgeinfer/internal/config"
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/model"
-	"github.com/keith/goedgeinfer/internal/worker"
-	"github.com/keith/goedgeinfer/pkg/metrics"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/processing"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/worker"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -39,7 +41,7 @@ type LoadModelRequest struct {
 // InferenceRequest represents a request for model inference
 type InferenceRequest struct {
 	// ModelID is the unique identifier for the model
-	ModelID string      `json:"model_id"`
+	ModelID string `json:"model_id"`
 	// Version is the specific version of the model to use (optional)
 	Version string      `json:"version,omitempty"`
 	Input   interface{} `json:"input"`
@@ -68,7 +70,7 @@ type ReloadResponse struct {
 // RemoteModelManager defines S3/model management operations for testability
 // (or write a manual mock for tests)
 //
-//go:generate mockgen -destination=mock_remote_model_manager.go -package=api github.com/keith/goedgeinfer/internal/api RemoteModelManager
+//go:generate mockgen -destination=mock_remote_model_manager.go -package=api github.com/kdsmith18542/GoEdgeInfer/internal/api RemoteModelManager
 type RemoteModelManager interface {
 	ListRemoteModels(ctx context.Context, cfg *config.Config) ([]string, error)
 	CleanupLocalModelCache(cacheDir string, keep map[string]struct{}) error
@@ -93,16 +95,15 @@ func (d *defaultRemoteModelManager) UploadModelToS3(ctx context.Context, cfg *co
 
 // API represents the API server
 type API struct {
-	router       *gin.Engine
-	engine       inference.Engine
-	workerPool   *worker.WorkerPool  // Updated type
-	tracer       trace.Tracer
-	logger       *zap.Logger
-	modelManager ModelManager
+	router        *gin.Engine
+	engine        inference.Engine
+	workerPool    *worker.WorkerPool // Updated type
+	tracer        trace.Tracer
+	logger        *zap.Logger
+	modelManager  ModelManager
 	remoteManager RemoteModelManager // Added remote manager
+	pipeline      *processing.Pipeline
 }
-
-
 
 // auditLog logs an audit event with the given action and details
 func (a *API) auditLog(c *gin.Context, action string, details map[string]interface{}) {
@@ -124,7 +125,7 @@ func (a *API) auditLog(c *gin.Context, action string, details map[string]interfa
 	}
 
 	// Log with all fields
-	logging.Info(fields...)
+	a.logger.Info("audit", zap.String("action", action), zap.Any("details", details))
 }
 
 // ModelManager defines the interface for model management operations
@@ -136,7 +137,7 @@ type ModelManager interface {
 }
 
 // NewAPI creates a new API instance
-func NewAPI(engine inference.Engine, workerPool *worker.Pool, modelMgr ModelManager, tracer trace.Tracer, logger *zap.Logger) *API {
+func NewAPI(engine inference.Engine, workerPool *worker.WorkerPool, modelMgr ModelManager, tracer trace.Tracer, logger *zap.Logger) *API {
 	api := &API{
 		router:       gin.New(),
 		engine:       engine,
@@ -193,7 +194,7 @@ func (a *API) Infer(c *gin.Context) {
 	}
 
 	// Submit task to worker pool
-	resultCh, errCh := a.workerPool.Submit(req.ModelID, processedInput)
+	resultCh, errCh := a.workerPool.Submit(req.ModelID, req.Version, processedInput)
 
 	select {
 	case result := <-resultCh:
@@ -221,7 +222,7 @@ func (a *API) Infer(c *gin.Context) {
 
 	case err := <-errCh:
 		metrics.InferenceErrorsCounter.WithLabelValues(req.ModelID).Inc()
-		logging.Error("Inference failed", "error", err)
+		a.logger.Error("Inference failed", zap.Error(err))
 		span.RecordError(err)
 		status := http.StatusInternalServerError
 		errMsg := err.Error()
@@ -319,10 +320,10 @@ func (a *API) Predict(c *gin.Context) {
 	if req.ModelID != "" && req.ModelID != modelID {
 		errMsg := "model_id in path does not match model_id in request body"
 		a.auditLog(c, "inference_error", map[string]interface{}{
-			"error":          errMsg,
-			"path_model_id":  modelID,
-			"body_model_id":  req.ModelID,
-			"model_version":  req.Version,
+			"error":         errMsg,
+			"path_model_id": modelID,
+			"body_model_id": req.ModelID,
+			"model_version": req.Version,
 		})
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: errMsg})
 		return
@@ -337,8 +338,8 @@ func (a *API) Predict(c *gin.Context) {
 	if req.Input == nil {
 		errMsg := "input is required"
 		a.auditLog(c, "inference_error", map[string]interface{}{
-			"error":        errMsg,
-			"model_id":     req.ModelID,
+			"error":         errMsg,
+			"model_id":      req.ModelID,
 			"model_version": req.Version,
 		})
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: errMsg})
@@ -347,7 +348,7 @@ func (a *API) Predict(c *gin.Context) {
 
 	// Log the inference request
 	a.auditLog(c, "inference_start", map[string]interface{}{
-		"model_id":     req.ModelID,
+		"model_id":      req.ModelID,
 		"model_version": req.Version,
 	})
 
@@ -360,8 +361,8 @@ func (a *API) Predict(c *gin.Context) {
 		if result == nil {
 			errMsg := "no result from worker"
 			a.auditLog(c, "inference_error", map[string]interface{}{
-				"error":        errMsg,
-				"model_id":     req.ModelID,
+				"error":         errMsg,
+				"model_id":      req.ModelID,
 				"model_version": req.Version,
 			})
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: errMsg})
@@ -374,9 +375,9 @@ func (a *API) Predict(c *gin.Context) {
 
 		// Log successful inference
 		a.auditLog(c, "inference_success", map[string]interface{}{
-			"model_id":     req.ModelID,
+			"model_id":      req.ModelID,
 			"model_version": req.Version,
-			"latency_ms":   time.Since(startTime).Milliseconds(),
+			"latency_ms":    time.Since(startTime).Milliseconds(),
 		})
 
 		c.JSON(http.StatusOK, InferenceResponse{
@@ -400,10 +401,10 @@ func (a *API) Predict(c *gin.Context) {
 
 		// Log the error
 		a.auditLog(c, "inference_error", map[string]interface{}{
-			"error":        err.Error(),
-			"model_id":     req.ModelID,
+			"error":         err.Error(),
+			"model_id":      req.ModelID,
 			"model_version": req.Version,
-			"status_code":  status,
+			"status_code":   status,
 		})
 
 		c.JSON(status, ErrorResponse{Error: err.Error()})
@@ -411,9 +412,9 @@ func (a *API) Predict(c *gin.Context) {
 	case <-ctx.Done():
 		// Request was cancelled
 		a.auditLog(c, "inference_cancelled", map[string]interface{}{
-			"model_id":     req.ModelID,
+			"model_id":      req.ModelID,
 			"model_version": req.Version,
-			"reason":       ctx.Err().Error(),
+			"reason":        ctx.Err().Error(),
 		})
 	}
 }
@@ -452,7 +453,7 @@ func (a *API) GetModelInfo(c *gin.Context) {
 	version := c.Param("version")
 
 	// Get model info from the engine
-	info, err := a.engine.GetModelInfo(c.Request.Context(), modelID, version)
+	info, err := a.engine.GetModelInfo(modelID, version)
 	if err != nil {
 		a.auditLog(c, "model_info_error", map[string]interface{}{
 			"error":    err.Error(),
@@ -523,12 +524,26 @@ func (a *API) BatchPredict(c *gin.Context) {
 			ModelID:      modelID,
 			ModelVersion: version,
 			Input:        input,
-			CreatedAt:    time.Now(),
 		}
 
 		// Submit task to worker pool
-		result, err := a.workerPool.Submit(ctx, task)
-		if err != nil {
+		resultCh, errCh := a.workerPool.Submit(modelID, version, task)
+
+		// Wait for result or error
+		select {
+		case result := <-resultCh:
+			if result == nil {
+				errMsg := "no result from worker"
+				a.auditLog(c, "batch_predict_error", map[string]interface{}{
+					"error":         errMsg,
+					"model_id":      modelID,
+					"model_version": version,
+				})
+				c.JSON(http.StatusInternalServerError, ErrorResponse{Error: errMsg})
+				return
+			}
+			results = append(results, result)
+		case err := <-errCh:
 			a.auditLog(c, "batch_predict_error", map[string]interface{}{
 				"error":    err.Error(),
 				"model_id": modelID,
@@ -536,28 +551,34 @@ func (a *API) BatchPredict(c *gin.Context) {
 			})
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 			return
+		case <-ctx.Done():
+			// Request was cancelled
+			a.auditLog(c, "batch_predict_cancelled", map[string]interface{}{
+				"model_id":      modelID,
+				"model_version": version,
+				"reason":        ctx.Err().Error(),
+			})
+			return
 		}
-
-		results = append(results, result)
 	}
 
 	// Calculate total latency
 	latency := time.Since(startTime).Milliseconds()
 
 	a.auditLog(c, "batch_predict_success", map[string]interface{}{
-		"model_id":    modelID,
-		"version":     version,
-		"batch_size":  len(req.Inputs),
-		"latency_ms":  latency,
-		"status":      "success",
+		"model_id":   modelID,
+		"version":    version,
+		"batch_size": len(req.Inputs),
+		"latency_ms": latency,
+		"status":     "success",
 	})
 
 	c.JSON(http.StatusOK, BatchInferenceResponse{
-		ModelID:    modelID,
-		Version:    version,
-		Outputs:    results,
-		LatencyMs:  latency,
-		BatchSize:  len(req.Inputs),
+		ModelID:   modelID,
+		Version:   version,
+		Outputs:   results,
+		LatencyMs: latency,
+		BatchSize: len(req.Inputs),
 	})
 }
 
@@ -579,7 +600,7 @@ func (a *API) ListRemoteModels(c *gin.Context) {
 	if !requireRole(c, "admin", "ops") {
 		return
 	}
-	auditLog(c, "list_remote_models", nil)
+	a.auditLog(c, "list_remote_models", nil)
 
 	cfg := config.Load() // or inject config if available
 	models, err := a.remoteManager.ListRemoteModels(c.Request.Context(), cfg)
@@ -670,7 +691,7 @@ func auditLog(c *gin.Context, action string, details interface{}) {
 			user = sub
 		}
 	}
-	logging.Info("AUDIT", "user", user, "action", action, "details", details)
+	logging.Info("AUDIT", zap.String("user", user), zap.String("action", action), zap.Any("details", details))
 }
 
 type CleanupCacheRequest struct {
@@ -682,38 +703,19 @@ type DeleteRemoteModelRequest struct {
 	ObjectKey string `json:"object_key" binding:"required"`
 }
 
-func (a *API) DeleteRemoteModel(c *gin.Context) {
-	var req DeleteRemoteModelRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-	cfg := config.Load()
-	err := a.remoteManager.DeleteModelFromS3(c.Request.Context(), cfg, req.ObjectKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "remote_model_deleted"})
+type BatchInferenceRequest struct {
+	Inputs []interface{} `json:"inputs" binding:"required"`
 }
 
-// UploadRemoteModel handles uploading a model to the remote S3/MinIO registry
+type BatchInferenceResponse struct {
+	ModelID   string        `json:"model_id"`
+	Version   string        `json:"version"`
+	Outputs   []interface{} `json:"outputs"`
+	LatencyMs int64         `json:"latency_ms"`
+	BatchSize int           `json:"batch_size"`
+}
+
 type UploadRemoteModelRequest struct {
 	LocalPath string `json:"local_path" binding:"required"`
 	ObjectKey string `json:"object_key" binding:"required"`
-}
-
-func (a *API) UploadRemoteModel(c *gin.Context) {
-	var req UploadRemoteModelRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-	cfg := config.Load()
-	err := a.remoteManager.UploadModelToS3(c.Request.Context(), cfg, req.LocalPath, req.ObjectKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "remote_model_uploaded"})
 }

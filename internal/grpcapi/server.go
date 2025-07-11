@@ -3,9 +3,9 @@ package grpcapi
 import (
 	"context"
 
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/worker"
-	pb "github.com/keith/goedgeinfer/proto"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/worker"
+	pb "github.com/kdsmith18542/GoEdgeInfer/proto"
 )
 
 type Server struct {
@@ -27,7 +27,7 @@ func (s *Server) Infer(ctx context.Context, req *pb.InferRequest) (*pb.InferResp
 		return &pb.InferResponse{Error: "model_id is required"}, nil
 	}
 	// Use input_floats for now; extend for bytes as needed
-	resultCh, errCh := s.workerPool.Submit(req.GetModelId(), req.GetInputFloats())
+	resultCh, errCh := s.workerPool.Submit(req.GetModelId(), req.GetVersion(), req.GetInputFloats())
 	select {
 	case result := <-resultCh:
 		return &pb.InferResponse{
@@ -59,7 +59,7 @@ func (s *Server) StreamInfer(stream pb.GoEdgeInferService_StreamInferServer) err
 			}
 			continue
 		}
-		resultCh, errCh := s.workerPool.Submit(req.GetModelId(), req.GetInputFloats())
+		resultCh, errCh := s.workerPool.Submit(req.GetModelId(), req.GetVersion(), req.GetInputFloats())
 		select {
 		case result := <-resultCh:
 			resp := &pb.InferResponse{

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
 )

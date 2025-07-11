@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keith/goedgeinfer/internal/model"
-	"github.com/keith/goedgeinfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
 )
 
 // TFLiteModel represents a loaded TensorFlow Lite model with its interpreter and metadata

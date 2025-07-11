@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/keith/goedgeinfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
 )
 
 func tempModelFile(t *testing.T) string {

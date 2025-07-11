@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
 )
 
 func main() {

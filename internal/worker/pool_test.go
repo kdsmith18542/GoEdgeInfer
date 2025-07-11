@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/keith/goedgeinfer/internal/inference"
-	"github.com/keith/goedgeinfer/internal/model"
-	"github.com/keith/goedgeinfer/internal/persistence"
-	"github.com/keith/goedgeinfer/internal/processing"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/inference"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/persistence"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/processing"
 	"go.opentelemetry.io/otel/trace"
 )
 

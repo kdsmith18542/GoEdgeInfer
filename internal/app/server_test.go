@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keith/goedgeinfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
 )
 
 func TestNewServerWithConfig_BadPipeline(t *testing.T) {

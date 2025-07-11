@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/keith/goedgeinfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
 )
 
 // Mock minio client and config for S3 tests would be ideal, but here we just check error paths and local logic.

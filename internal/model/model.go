@@ -18,9 +18,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/keith/goedgeinfer/internal/config"
-	"github.com/keith/goedgeinfer/pkg/logging"
-	"github.com/keith/goedgeinfer/pkg/metrics"
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
+	"github.com/kdsmith18542/GoEdgeInfer/pkg/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
