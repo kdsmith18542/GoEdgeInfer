@@ -346,6 +346,19 @@ func (a *API) Predict(c *gin.Context) {
 		return
 	}
 
+	// Convert input to []float32 for pipeline compatibility
+	processedInput, err := convertToFloat32Slice(req.Input)
+	if err != nil {
+		errMsg := fmt.Sprintf("input conversion failed: %v", err)
+		a.auditLog(c, "inference_error", map[string]interface{}{
+			"error":         errMsg,
+			"model_id":      req.ModelID,
+			"model_version": req.Version,
+		})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: errMsg})
+		return
+	}
+
 	// Log the inference request
 	a.auditLog(c, "inference_start", map[string]interface{}{
 		"model_id":      req.ModelID,
@@ -353,7 +366,7 @@ func (a *API) Predict(c *gin.Context) {
 	})
 
 	// Submit task to worker pool with version
-	resultCh, errCh := a.workerPool.Submit(req.ModelID, req.Version, req.Input)
+	resultCh, errCh := a.workerPool.Submit(req.ModelID, req.Version, processedInput)
 
 	// Wait for result or error
 	select {
@@ -718,4 +731,37 @@ type BatchInferenceResponse struct {
 type UploadRemoteModelRequest struct {
 	LocalPath string `json:"local_path" binding:"required"`
 	ObjectKey string `json:"object_key" binding:"required"`
+}
+
+// convertToFloat32Slice converts various input types to []float32
+func convertToFloat32Slice(input interface{}) ([]float32, error) {
+	switch v := input.(type) {
+	case []float32:
+		return v, nil
+	case []float64:
+		result := make([]float32, len(v))
+		for i, val := range v {
+			result[i] = float32(val)
+		}
+		return result, nil
+	case []interface{}:
+		result := make([]float32, len(v))
+		for i, val := range v {
+			switch num := val.(type) {
+			case float64:
+				result[i] = float32(num)
+			case float32:
+				result[i] = num
+			case int:
+				result[i] = float32(num)
+			case int64:
+				result[i] = float32(num)
+			default:
+				return nil, fmt.Errorf("unsupported type at index %d: %T", i, val)
+			}
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("unsupported input type: %T", input)
+	}
 }

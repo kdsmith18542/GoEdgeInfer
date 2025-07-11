@@ -24,10 +24,10 @@ s3:
   use_ssl: false
 api_key: "changeme-supersecret-key"
 signature_verification:
-  enabled: true
+  enabled: false
   public_key_pem: "configs/public_key.pem"
 tls:
-  enabled: true
+  enabled: false
   cert_file: "configs/server.crt"
   key_file: "configs/server.key"
   client_ca: "configs/ca.crt"
