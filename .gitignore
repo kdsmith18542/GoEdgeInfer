@@ -191,3 +191,30 @@ public
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# --- GoEdgeInfer custom additions ---
+# Go build artifacts
+*.a
+*.o
+*.obj
+
+# Go module cache (optional, usually keep go.mod/go.sum)
+# *.mod
+# *.sum
+
+# Protobuf generated files (scoped to proto/)
+proto/*.pb.go
+
+# Model/test data (ignore if not needed in repo)
+internal/api/testdata/
+internal/persistence/testdata/
+internal/worker/testdata/
+test_models/
+
+# Configs and secrets (ignore if not needed in repo)
+configs/*.key
+configs/*.crt
+configs/*.pem
+configs/*.yaml
+
+# --- End GoEdgeInfer custom additions ---
