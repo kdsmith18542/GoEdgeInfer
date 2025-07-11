@@ -53,6 +53,9 @@ cmd/*/main
 # Debug files
 debug/
 
+# Data files and queues
+internal/app/data/
+
 # Local development files
 local/
 
