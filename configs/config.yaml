@@ -1,0 +1,43 @@
+# GoEdgeInfer configuration file
+server_port: "8080"
+worker_pool_size: 4
+model_path: "testdata/test_model.onnx"
+logging:
+  level: "info"
+pipeline:
+  - type: "normalize"
+    params: {}
+  - type: "softmax"
+    params: {}
+  - type: "apply_threshold"
+    params:
+      threshold: 0.7
+  - type: "map_to_labels"
+    params:
+      labels: ["cat", "dog", "bird"]
+s3:
+  endpoint: "http://localhost:9000"
+  bucket: "models"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  region: "us-east-1"
+  use_ssl: false
+api_key: "changeme-supersecret-key"
+signature_verification:
+  enabled: true
+  public_key_pem: "configs/public_key.pem"
+tls:
+  enabled: true
+  cert_file: "configs/server.crt"
+  key_file: "configs/server.key"
+  client_ca: "configs/ca.crt"
+  require_client_cert: true
+jwt:
+  enabled: false
+  issuer: ""
+  audience: ""
+  jwks_url: ""
+  secret: "changeme-jwt-secret"
+  algorithm: "HS256"
+  require_role: "admin"
+  require_scope: "manage"

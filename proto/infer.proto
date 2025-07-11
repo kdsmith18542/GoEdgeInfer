@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package goedgeinfer;
+
+option go_package = "github.com/keith/goedgeinfer/proto;proto";
+
+// Inference request message
+message InferRequest {
+  string model_id = 1;
+  // Accepts either a flat array of floats or bytes for generality
+  repeated float input_floats = 2;
+  bytes input_bytes = 3;
+  string request_id = 4;
+}
+
+// Inference response message
+message InferResponse {
+  string model_id = 1;
+  repeated float output_floats = 2;
+  bytes output_bytes = 3;
+  int64 latency_ms = 4;
+  string request_id = 5;
+  string error = 6;
+}
+
+// Inference service definition
+service GoEdgeInferService {
+  // Unary inference
+  rpc Infer(InferRequest) returns (InferResponse);
+  // Streaming inference (for video/audio or batch)
+  rpc StreamInfer(stream InferRequest) returns (stream InferResponse);
+}
