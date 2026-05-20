@@ -173,7 +173,7 @@ func (m *ModelManager) LoadModelWithS3Support(cfg *config.Config, id, version, p
 				objectKey = parts[1]
 			}
 		}
-		localPath := filepath.Join("/tmp", id+"_"+version+".onnx")
+		localPath := filepath.Join(os.TempDir(), id+"_"+version+".onnx")
 		err := m.downloader.Download(context.Background(), cfg.S3.Endpoint, bucket, cfg.S3.AccessKey, cfg.S3.SecretKey, cfg.S3.Region, cfg.S3.UseSSL, objectKey, localPath)
 		if err != nil {
 			return nil, err

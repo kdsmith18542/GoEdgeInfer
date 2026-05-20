@@ -78,9 +78,9 @@ func SetupRoutes(r *gin.Engine, api *API, apiKey string, jwtCfg config.JWTConfig
 		infer.POST("/batch/:model_id/versions/:version", api.BatchPredict)
 	}
 
-	// Management endpoints (JWT required)
+	// Management endpoints (JWT optional/required depending on configuration)
+	mgmt := v1.Group("/mgmt")
 	if jwtCfg.Enabled {
-		mgmt := v1.Group("/mgmt")
 		mgmt.Use(middleware.JWTMiddleware(middleware.JWTConfig{
 			Secret:       jwtCfg.Secret,
 			Algorithm:    jwtCfg.Algorithm,
@@ -89,32 +89,34 @@ func SetupRoutes(r *gin.Engine, api *API, apiKey string, jwtCfg config.JWTConfig
 			RequireRole:  jwtCfg.RequireRole,
 			RequireScope: jwtCfg.RequireScope,
 		}))
+	}
+	{
+		// Remote model management
+		remote := mgmt.Group("/remote")
 		{
-			// Remote model management
-			remote := mgmt.Group("/remote")
-			{
-				remote.GET("/models", api.ListRemoteModels)
-				remote.POST("/cleanup", api.CleanupModelCache)
-				remote.POST("/delete", api.DeleteRemoteModel)
-				remote.POST("/upload", api.UploadRemoteModel)
-			}
+			remote.GET("/models", api.ListRemoteModels)
+			remote.POST("/cleanup", api.CleanupModelCache)
+			remote.POST("/delete", api.DeleteRemoteModel)
+			remote.POST("/upload", api.UploadRemoteModel)
+		}
 
-			// System management
-			system := mgmt.Group("/system")
-			{
-				system.POST("/reload", api.Reload)
-				system.GET("/config", func(c *gin.Context) {
-					// Only admin can view
+		// System management
+		system := mgmt.Group("/system")
+		{
+			system.POST("/reload", api.Reload)
+			system.GET("/config", func(c *gin.Context) {
+				// If JWT is enabled, only admin can view
+				if jwtCfg.Enabled {
 					if claims, exists := c.Get("jwt_claims"); !exists || claims.(map[string]interface{})["role"] != "admin" {
 						c.AbortWithStatusJSON(403, ErrorResponse{Error: "admin only"})
 						return
 					}
-					c.JSON(200, gin.H{
-						"jwt":     jwtCfg,
-						"version": getVersionInfo(),
-					})
+				}
+				c.JSON(200, gin.H{
+					"jwt":     jwtCfg,
+					"version": getVersionInfo(),
 				})
-			}
+			})
 		}
 	}
 

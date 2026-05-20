@@ -1,3 +1,5 @@
+//go:build !tflite
+
 package inference
 
 import (
@@ -177,7 +179,7 @@ func getTopNResults(output []float32, labels []string, topN int) []map[string]in
 }
 
 // Predict performs mock inference using the TFLite model
-func (e *TFLiteEngine) Predict(ctx context.Context, modelID string, input interface{}) (*Prediction, error) {
+func (e *TFLiteEngine) Predict(ctx context.Context, modelID, version string, input interface{}) (*Prediction, error) {
 	startTime := time.Now()
 
 	e.mu.RLock()
@@ -218,7 +220,7 @@ func (e *TFLiteEngine) Predict(ctx context.Context, modelID string, input interf
 }
 
 // BatchPredict performs batch inference
-func (e *TFLiteEngine) BatchPredict(ctx context.Context, modelID string, inputs []interface{}) ([]*Prediction, error) {
+func (e *TFLiteEngine) BatchPredict(ctx context.Context, modelID, version string, inputs []interface{}) ([]*Prediction, error) {
 	// For simplicity, we'll process each input sequentially
 	// In a production environment, you might want to optimize this
 	// by batching multiple inputs into a single inference
@@ -239,7 +241,7 @@ func (e *TFLiteEngine) BatchPredict(ctx context.Context, modelID string, inputs 
 	// Process each input
 	results := make([]*Prediction, 0, len(inputs))
 	for _, input := range inputs {
-		pred, err := e.Predict(ctx, modelID, input)
+		pred, err := e.Predict(ctx, modelID, version, input)
 		if err != nil {
 			// Log the error but continue with other inputs
 			logging.Error("Error in batch prediction", "error", err, "model_id", modelID)

@@ -1,0 +1,6 @@
+.git
+*.tar.gz
+main
+goedgeinferctl
+bin/
+tmp/

@@ -275,16 +275,17 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 	}
 
 	// gRPC server
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to listen for gRPC: %w", err)
+	}
+
 	go func() {
-		lis, err := net.Listen("tcp", grpcAddr)
-		if err != nil {
-			logger.Fatal("Failed to listen for gRPC", zap.Error(err))
-		}
 		grpcServer := grpc.NewServer()
 		proto.RegisterGoEdgeInferServiceServer(grpcServer, grpcapi.NewServer(engine, workerPool))
-		logger.Info(fmt.Sprintf("gRPC server listening on %s", grpcAddr))
+		logger.Info(fmt.Sprintf("gRPC server listening on %s", lis.Addr().String()))
 		if err := grpcServer.Serve(lis); err != nil {
-			logger.Fatal("gRPC server error", zap.Error(err))
+			logger.Error("gRPC server error", zap.Error(err))
 		}
 	}()
 
@@ -295,7 +296,7 @@ func NewServerWithConfig(cfg *config.Config) (*Server, error) {
 		HTTPServer:   srv,
 		GRPCAddr:     grpcAddr,
 		Tracer:       tp,
-		ShutdownFunc: func() { engine.Close(); queue.Close() },
+		ShutdownFunc: func() { engine.Close(); queue.Close(); lis.Close() },
 		WorkerPool:   workerPool,
 		ReloadCh:     reloadCh,
 		ServerErrors: serverErrors,

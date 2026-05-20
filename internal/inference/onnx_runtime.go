@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kdsmith18542/GoEdgeInfer/internal/config"
 	"github.com/kdsmith18542/GoEdgeInfer/internal/model"
 	"github.com/kdsmith18542/GoEdgeInfer/pkg/logging"
 	ort "github.com/yalue/onnxruntime_go"
@@ -101,6 +102,28 @@ func (e *ONNXRuntimeEngine) unloadModel(modelID string) error {
 	return nil
 }
 
+// GetModel retrieves a loaded model by ID and version
+func (e *ONNXRuntimeEngine) GetModel(modelID, version string) (*model.Model, error) {
+	return e.GetModelInfo(modelID, version)
+}
+
+// UnloadModel unloads an ONNX model from memory by ID and version
+func (e *ONNXRuntimeEngine) UnloadModel(modelID, version string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	key := modelID
+	if version != "" {
+		key = modelID + ":" + version
+	}
+
+	if _, exists := e.models[key]; !exists {
+		return model.ErrModelNotFound
+	}
+
+	return e.unloadModel(key)
+}
+
 // LoadModel loads an ONNX model from the given path
 func (e *ONNXRuntimeEngine) LoadModel(m *model.Model) error {
 	e.mu.Lock()
@@ -153,8 +176,37 @@ func (e *ONNXRuntimeEngine) LoadModel(m *model.Model) error {
 		outputs[i] = outTensor
 	}
 
+	var sessionOpts *ort.SessionOptions
+	var sessOptsErr error
+	if config.AppConfig.ExecutionProvider.Type == "cuda" {
+		sessionOpts, sessOptsErr = ort.NewSessionOptions()
+		if sessOptsErr != nil {
+			logging.Warn("Failed to create session options for CUDA provider, falling back to CPU", "error", sessOptsErr)
+		} else {
+			defer sessionOpts.Destroy()
+			cudaOpts, cudaOptsErr := ort.NewCUDAProviderOptions()
+			if cudaOptsErr != nil {
+				logging.Warn("Failed to create CUDA provider options, falling back to CPU", "error", cudaOptsErr)
+			} else {
+				defer cudaOpts.Destroy()
+				updateMap := map[string]string{
+					"device_id": fmt.Sprintf("%d", config.AppConfig.ExecutionProvider.DeviceID),
+				}
+				if err := cudaOpts.Update(updateMap); err != nil {
+					logging.Warn("Failed to update CUDA provider options, falling back to CPU", "error", err)
+				} else {
+					if err := sessionOpts.AppendExecutionProviderCUDA(cudaOpts); err != nil {
+						logging.Warn("Failed to append CUDA execution provider, falling back to CPU", "error", err)
+					} else {
+						logging.Info("Enabled CUDA execution provider for model", "model_id", m.ID, "device_id", config.AppConfig.ExecutionProvider.DeviceID)
+					}
+				}
+			}
+		}
+	}
+
 	// Create AdvancedSession
-	session, err := ort.NewAdvancedSession(m.Path, inputNames, outputNames, inputs, outputs, nil)
+	session, err := ort.NewAdvancedSession(m.Path, inputNames, outputNames, inputs, outputs, sessionOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create ONNX AdvancedSession: %w", err)
 	}

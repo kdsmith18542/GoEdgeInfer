@@ -41,3 +41,12 @@ jwt:
   algorithm: "HS256"
   require_role: "admin"
   require_scope: "manage"
+
+# Execution provider for ONNX Runtime inference
+# type: "cpu", "cuda", or "tensorrt"
+# device_id: GPU device index (0 = primary GPU)
+# Supported GPU architectures: Pascal (GTX 10xx, compute 6.0/6.1) and newer
+execution_provider:
+  type: "cuda"
+  device_id: 0
+

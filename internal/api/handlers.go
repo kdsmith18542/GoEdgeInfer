@@ -679,8 +679,8 @@ func (a *API) UploadRemoteModel(c *gin.Context) {
 func requireRole(c *gin.Context, allowedRoles ...string) bool {
 	claims, exists := c.Get("jwt_claims")
 	if !exists {
-		c.AbortWithStatusJSON(403, gin.H{"error": "missing JWT claims"})
-		return false
+		// If JWT claims are missing, it means JWT auth is disabled; allow request
+		return true
 	}
 	role, ok := claims.(map[string]interface{})["role"].(string)
 	if !ok {

@@ -85,7 +85,7 @@ func TestWorkerPool_QueueRecovery(t *testing.T) {
 
 func TestWorkerPool_SubmitAndProcess_Success(t *testing.T) {
 	pool := NewWorkerPool(&mockEngine{}, 1, nil, nil, nil)
-	resultCh, errCh := pool.Submit("model1", "input")
+	resultCh, errCh := pool.Submit("model1", "", "input")
 	select {
 	case res := <-resultCh:
 		if res.Output != "ok" {
@@ -99,7 +99,7 @@ func TestWorkerPool_SubmitAndProcess_Success(t *testing.T) {
 
 func TestWorkerPool_SubmitAndProcess_Error(t *testing.T) {
 	pool := NewWorkerPool(&errorEngine{}, 1, nil, nil, nil)
-	_, errCh := pool.Submit("model1", "input")
+	_, errCh := pool.Submit("model1", "", "input")
 	if err := <-errCh; err == nil || err.Error() != "fail" {
 		t.Errorf("expected error 'fail', got %v", err)
 	}
@@ -108,7 +108,7 @@ func TestWorkerPool_SubmitAndProcess_Error(t *testing.T) {
 
 func TestWorkerPool_PipelineError(t *testing.T) {
 	pool := NewWorkerPool(&mockEngine{}, 1, nil, &errorPipeline{}, nil)
-	_, errCh := pool.Submit("model1", "input")
+	_, errCh := pool.Submit("model1", "", "input")
 	if err := <-errCh; err == nil || err.Error() != "pipeline fail" {
 		t.Errorf("expected pipeline error, got %v", err)
 	}

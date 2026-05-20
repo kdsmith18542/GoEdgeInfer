@@ -218,3 +218,10 @@ configs/*.pem
 configs/*.yaml
 
 # --- End GoEdgeInfer custom additions ---
+
+# Compiled binaries
+main
+goedgeinferctl
+
+# SDK tarballs
+*.tar.gz

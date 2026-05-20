@@ -18,6 +18,7 @@ import (
 	"github.com/kdsmith18542/GoEdgeInfer/internal/processing"
 	"github.com/kdsmith18542/GoEdgeInfer/internal/worker"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 type dummyEngine struct{}
@@ -42,6 +43,45 @@ func (d *dummyEngine) BatchPredict(ctx context.Context, modelID, version string,
 func (d *dummyEngine) GetModelInfo(modelID, version string) (*model.Model, error) { return nil, nil }
 func (d *dummyEngine) ListModels() []string                                       { return []string{"test_model"} }
 
+type mockModelManager struct {
+	ListModelsFunc   func() []string
+	GetModelInfoFunc func(modelID, version string) (interface{}, error)
+	LoadModelFunc    func(ctx context.Context, modelID, version, path string) error
+	UnloadModelFunc  func(ctx context.Context, modelID, version string) error
+}
+
+func (m *mockModelManager) ListModels() []string {
+	if m.ListModelsFunc != nil {
+		return m.ListModelsFunc()
+	}
+	return []string{"test_model"}
+}
+func (m *mockModelManager) GetModelInfo(modelID, version string) (interface{}, error) {
+	if m.GetModelInfoFunc != nil {
+		return m.GetModelInfoFunc(modelID, version)
+	}
+	return nil, nil
+}
+func (m *mockModelManager) LoadModel(ctx context.Context, modelID, version, path string) error {
+	if m.LoadModelFunc != nil {
+		return m.LoadModelFunc(ctx, modelID, version, path)
+	}
+	return nil
+}
+func (m *mockModelManager) UnloadModel(ctx context.Context, modelID, version string) error {
+	if m.UnloadModelFunc != nil {
+		return m.UnloadModelFunc(ctx, modelID, version)
+	}
+	return nil
+}
+
+func newTestAPI(engine inference.Engine, workerPool *worker.WorkerPool, pipeline *processing.Pipeline) *API {
+	mockMgr := &mockModelManager{}
+	apiInstance := NewAPI(engine, workerPool, mockMgr, trace.NewNoopTracerProvider().Tracer("test"), zap.NewNop())
+	apiInstance.pipeline = pipeline
+	return apiInstance
+}
+
 func TestAPI_Infer_PersistentQueue(t *testing.T) {
 	os.RemoveAll("./testdata/api_queue")
 	queue, err := persistence.NewPersistentQueue("./testdata/api_queue")
@@ -53,15 +93,18 @@ func TestAPI_Infer_PersistentQueue(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, queue, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
 
 	r := gin.Default()
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
 	// Prepare request
 	input := []float32{1, 2, 3}
-	body, _ := json.Marshal(input)
-	req := httptest.NewRequest(http.MethodPost, "/predict/test_model", bytes.NewReader(body))
+	reqBody := InferenceRequest{
+		Input: input,
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/infer/test_model", bytes.NewReader(body))
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 
@@ -84,10 +127,10 @@ func TestAPI_ListModels(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -109,8 +152,8 @@ func TestAPI_HealthCheck(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -125,12 +168,15 @@ func TestAPI_Predict_MissingAPIKey(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
 	input := []float32{1, 2, 3}
-	body, _ := json.Marshal(input)
-	req := httptest.NewRequest(http.MethodPost, "/predict/test_model", bytes.NewReader(body))
+	reqBody := InferenceRequest{
+		Input: input,
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/infer/test_model", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusOK {
@@ -143,10 +189,10 @@ func TestAPI_ReloadEndpoint(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/reload", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/system/reload", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -160,10 +206,10 @@ func TestAPI_UnloadModelEndpoint(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodDelete, "/models/test_model", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/models/test_model", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -177,10 +223,10 @@ func TestAPI_Predict_InvalidInput(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodPost, "/predict/test_model", bytes.NewReader([]byte("notjson")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/infer/test_model", bytes.NewReader([]byte("notjson")))
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -194,10 +240,10 @@ func TestAPI_DoubleReload(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/reload", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/system/reload", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -217,10 +263,10 @@ func TestAPI_UnloadNonExistentModel(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodDelete, "/models/doesnotexist", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/models/doesnotexist", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -234,10 +280,10 @@ func TestAPI_Reload_MissingAPIKey(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/reload", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/system/reload", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusOK {
@@ -250,10 +296,10 @@ func TestAPI_UnloadModel_MissingAPIKey(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodDelete, "/models/test_model", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/models/test_model", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusOK {
@@ -266,10 +312,10 @@ func TestAPI_ListModels_MissingAPIKey(t *testing.T) {
 	engine := &dummyEngine{}
 	pipeline := &processing.Pipeline{}
 	workerPool := worker.NewWorkerPool(engine, 1, nil, pipeline, nil)
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 
-	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusOK {
@@ -307,10 +353,10 @@ func TestAPI_ListRemoteModels_Error(t *testing.T) {
 			return nil, errors.New("fail")
 		},
 	}
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
 	apiInstance.remoteManager = mockMgr
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
-	req := httptest.NewRequest(http.MethodGet, "/mgmt/remote_models", nil)
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mgmt/remote/models", nil)
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -327,11 +373,11 @@ func TestAPI_CleanupModelCache_Success(t *testing.T) {
 	mockMgr := &mockRemoteModelManager{
 		CleanupLocalModelCacheFunc: func(cacheDir string, keepPaths map[string]struct{}) error { return nil },
 	}
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
 	apiInstance.remoteManager = mockMgr
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 	body := []byte(`{"cache_dir":"/tmp","keep":[]}`)
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/cleanup_cache", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/remote/cleanup", bytes.NewReader(body))
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -348,11 +394,11 @@ func TestAPI_DeleteRemoteModel_Error(t *testing.T) {
 	mockMgr := &mockRemoteModelManager{
 		DeleteModelFromS3Func: func(ctx context.Context, cfg *config.Config, objectKey string) error { return errors.New("fail") },
 	}
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
 	apiInstance.remoteManager = mockMgr
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 	body := []byte(`{"object_key":"foo"}`)
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/delete_remote_model", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/remote/delete", bytes.NewReader(body))
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -371,11 +417,11 @@ func TestAPI_UploadRemoteModel_Error(t *testing.T) {
 			return errors.New("fail")
 		},
 	}
-	apiInstance := NewAPI(engine, workerPool, pipeline, nil)
+	apiInstance := newTestAPI(engine, workerPool, pipeline)
 	apiInstance.remoteManager = mockMgr
-	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{})
+	SetupRoutes(r, apiInstance, "testkey", config.JWTConfig{}, zap.NewNop())
 	body := []byte(`{"local_path":"foo","object_key":"bar"}`)
-	req := httptest.NewRequest(http.MethodPost, "/mgmt/upload_remote_model", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mgmt/remote/upload", bytes.NewReader(body))
 	req.Header.Set("X-API-Key", "testkey")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

@@ -46,6 +46,10 @@ type Config struct {
 		RequireRole  string `mapstructure:"require_role"`
 		RequireScope string `mapstructure:"require_scope"`
 	} `mapstructure:"jwt"`
+	ExecutionProvider struct {
+		Type     string `mapstructure:"type"`
+		DeviceID int    `mapstructure:"device_id"`
+	} `mapstructure:"execution_provider"`
 }
 
 type JWTConfig struct {
@@ -72,6 +76,8 @@ func Load() *Config {
 	v.SetDefault("worker_pool_size", 4)
 	v.SetDefault("model_path", "testdata/test_model.onnx")
 	v.SetDefault("logging.level", "info")
+	v.SetDefault("execution_provider.type", "cpu")
+	v.SetDefault("execution_provider.device_id", 0)
 
 	err := v.ReadInConfig()
 	if err != nil {
