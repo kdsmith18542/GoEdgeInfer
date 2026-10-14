@@ -50,6 +50,10 @@ type Config struct {
 		Type     string `mapstructure:"type"`
 		DeviceID int    `mapstructure:"device_id"`
 	} `mapstructure:"execution_provider"`
+	ONNXRuntime struct {
+		LibPath         string `mapstructure:"lib_path"`
+		SessionPoolSize int    `mapstructure:"session_pool_size"`
+	} `mapstructure:"onnxruntime"`
 }
 
 type JWTConfig struct {
@@ -78,6 +82,8 @@ func Load() *Config {
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("execution_provider.type", "cpu")
 	v.SetDefault("execution_provider.device_id", 0)
+	v.SetDefault("onnxruntime.lib_path", "")
+	v.SetDefault("onnxruntime.session_pool_size", 0)
 
 	err := v.ReadInConfig()
 	if err != nil {

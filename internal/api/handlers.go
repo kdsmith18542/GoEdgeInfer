@@ -107,6 +107,9 @@ type API struct {
 
 // auditLog logs an audit event with the given action and details
 func (a *API) auditLog(c *gin.Context, action string, details map[string]interface{}) {
+	if details == nil {
+		details = make(map[string]interface{})
+	}
 	// Add request ID if available
 	if requestID := c.GetHeader("X-Request-ID"); requestID != "" {
 		details["request_id"] = requestID
@@ -136,15 +139,24 @@ type ModelManager interface {
 	UnloadModel(ctx context.Context, modelID, version string) error
 }
 
+// SetRemoteManager replaces the remote model manager (used by app wiring
+// and tests).
+func (a *API) SetRemoteManager(m RemoteModelManager) {
+	if m != nil {
+		a.remoteManager = m
+	}
+}
+
 // NewAPI creates a new API instance
 func NewAPI(engine inference.Engine, workerPool *worker.WorkerPool, modelMgr ModelManager, tracer trace.Tracer, logger *zap.Logger) *API {
 	api := &API{
-		router:       gin.New(),
-		engine:       engine,
-		workerPool:   workerPool,
-		modelManager: modelMgr,
-		tracer:       tracer,
-		logger:       logger,
+		router:        gin.New(),
+		engine:        engine,
+		workerPool:    workerPool,
+		modelManager:  modelMgr,
+		remoteManager: &defaultRemoteModelManager{},
+		tracer:        tracer,
+		logger:        logger,
 	}
 	return api
 }
@@ -346,17 +358,22 @@ func (a *API) Predict(c *gin.Context) {
 		return
 	}
 
-	// Convert input to []float32 for pipeline compatibility
-	processedInput, err := convertToFloat32Slice(req.Input)
-	if err != nil {
-		errMsg := fmt.Sprintf("input conversion failed: %v", err)
-		a.auditLog(c, "inference_error", map[string]interface{}{
-			"error":         errMsg,
-			"model_id":      req.ModelID,
-			"model_version": req.Version,
-		})
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: errMsg})
-		return
+	// Convert input to []float32 for pipeline compatibility; named
+	// input maps pass through to the engine untouched (multi-input).
+	processedInput := req.Input
+	if _, isMap := req.Input.(map[string]interface{}); !isMap {
+		conv, convErr := convertToFloat32Slice(req.Input)
+		if convErr != nil {
+			errMsg := fmt.Sprintf("input conversion failed: %v", convErr)
+			a.auditLog(c, "inference_error", map[string]interface{}{
+				"error":         errMsg,
+				"model_id":      req.ModelID,
+				"model_version": req.Version,
+			})
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: errMsg})
+			return
+		}
+		processedInput = conv
 	}
 
 	// Log the inference request
@@ -733,7 +750,9 @@ type UploadRemoteModelRequest struct {
 	ObjectKey string `json:"object_key" binding:"required"`
 }
 
-// convertToFloat32Slice converts various input types to []float32
+// convertToFloat32Slice converts flat numeric input to []float32.
+// Named input maps are handled by the caller and reach the engine
+// unconverted (multi-input models, plan.md A6).
 func convertToFloat32Slice(input interface{}) ([]float32, error) {
 	switch v := input.(type) {
 	case []float32:

@@ -219,7 +219,7 @@ func (e *TFLiteEngine) Predict(ctx context.Context, modelID, version string, inp
 	return prediction, nil
 }
 
-// BatchPredict performs batch inference
+// BatchPredict returns no predictions (mock engine, never in serving path)
 func (e *TFLiteEngine) BatchPredict(ctx context.Context, modelID, version string, inputs []interface{}) ([]*Prediction, error) {
 	// For simplicity, we'll process each input sequentially
 	// In a production environment, you might want to optimize this

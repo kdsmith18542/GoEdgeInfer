@@ -38,7 +38,7 @@ processing pipeline (post)
 ## Concurrency rule
 
 Engines own a **pool of session+tensor sets per loaded model** (size =
-worker pool size, configurable). `Predict` checks one out exclusively and
+`onnxruntime.session_pool_size`, default = worker pool size). `Predict` checks one out exclusively and
 returns it. No tensor is ever written by two goroutines. Rationale: the
 2026-05 code shared one tensor set per model and released the lock before
 inference — a data race that silently corrupted concurrent results
@@ -58,8 +58,9 @@ provides registry bookkeeping; concrete engines implement execution.
 | `TFLiteMockEngine` | `tflite_engine_mock.go` | tests only — never in serving path |
 | `GGUFEngine` (llama.cpp) | — | planned (plan.md B1); the LLM-at-edge path |
 
-Dtypes: float32 today; int8/uint8 required (plan.md A4). Inputs: single
-tensor today; named multi-input planned (A6).
+Dtypes: float32/float64, int8–int64, uint8–uint64, bool (plan.md A4).
+Inputs: bare slice for single-input models, or a map keyed by input name
+for multi-input models (plan.md A6).
 
 ## Queue modes
 

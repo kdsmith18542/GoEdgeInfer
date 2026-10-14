@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"text/tabwriter"
@@ -42,7 +41,7 @@ var doRequest = func(method, path string, body interface{}) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	respBody, _ := ioutil.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s", respBody)
 	}
@@ -96,7 +95,7 @@ func batchInfer(inputFile, modelID, version string, outputFormat string) error {
 		if version != "" {
 			body["version"] = version
 		}
-		resp, err := doRequest("POST", "/predict/"+modelID, body)
+		resp, err := doRequest("POST", "/api/v1/infer/"+modelID, body)
 		if err != nil {
 			results = append(results, map[string]interface{}{"error": err.Error()})
 		} else {
@@ -132,19 +131,23 @@ var exitFunc = os.Exit
 func runCLI(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(stdout)
-	serverURL := fs.String("server", os.Getenv("GOEDGEINFER_SERVER"), "GoEdgeInfer server URL (e.g. http://localhost:8080)")
-	apiKey := fs.String("apikey", os.Getenv("GOEDGEINFER_APIKEY"), "API key for authentication")
+	serverFlag := fs.String("server", os.Getenv("GOEDGEINFER_SERVER"), "GoEdgeInfer server URL (e.g. http://localhost:8080)")
+	apiKeyFlag := fs.String("apikey", os.Getenv("GOEDGEINFER_APIKEY"), "API key for authentication")
 	if err := fs.Parse(args[1:]); err != nil {
 		stdout.Write([]byte(err.Error() + "\n"))
 		return 1
 	}
+	// doRequest reads the package-level values; publish the parsed flags so
+	// --server/--apikey are not silently ignored.
+	*serverURL = *serverFlag
+	*apiKey = *apiKeyFlag
 	if *serverURL == "" || *apiKey == "" || len(fs.Args()) == 0 {
 		stdout.Write([]byte("Usage: goedgeinferctl --server <url> --apikey <key> <command> [args...]\n"))
 		return 1
 	}
 	switch fs.Arg(0) {
 	case "list-models":
-		resp, err := doRequest("GET", "/models", nil)
+		resp, err := doRequest("GET", "/api/v1/models", nil)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
@@ -159,7 +162,7 @@ func runCLI(args []string, stdout io.Writer) int {
 		if len(fs.Args()) > 3 {
 			body["version"] = fs.Arg(3)
 		}
-		resp, err := doRequest("POST", "/models", body)
+		resp, err := doRequest("POST", "/api/v1/models", body)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
@@ -170,21 +173,21 @@ func runCLI(args []string, stdout io.Writer) int {
 			fmt.Fprintln(stdout, "Usage: unload-model <model_id>")
 			exitFunc(1)
 		}
-		resp, err := doRequest("DELETE", "/models/"+fs.Arg(1), nil)
+		resp, err := doRequest("DELETE", "/api/v1/models/"+fs.Arg(1), nil)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
 		}
 		fmt.Fprintln(stdout, string(resp))
 	case "reload":
-		resp, err := doRequest("POST", "/reload", nil)
+		resp, err := doRequest("POST", "/api/v1/mgmt/system/reload", nil)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
 		}
 		fmt.Fprintln(stdout, string(resp))
 	case "list-remote":
-		resp, err := doRequest("GET", "/remote_models", nil)
+		resp, err := doRequest("GET", "/api/v1/mgmt/remote/models", nil)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
@@ -196,7 +199,7 @@ func runCLI(args []string, stdout io.Writer) int {
 			exitFunc(1)
 		}
 		body := map[string]interface{}{"local_path": fs.Arg(1), "object_key": fs.Arg(2)}
-		resp, err := doRequest("POST", "/upload_remote_model", body)
+		resp, err := doRequest("POST", "/api/v1/mgmt/remote/upload", body)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
@@ -208,7 +211,7 @@ func runCLI(args []string, stdout io.Writer) int {
 			exitFunc(1)
 		}
 		body := map[string]interface{}{"object_key": fs.Arg(1)}
-		resp, err := doRequest("POST", "/delete_remote_model", body)
+		resp, err := doRequest("POST", "/api/v1/mgmt/remote/delete", body)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)
@@ -220,7 +223,7 @@ func runCLI(args []string, stdout io.Writer) int {
 			exitFunc(1)
 		}
 		body := map[string]interface{}{"cache_dir": fs.Arg(1), "keep": fs.Args()[2:]}
-		resp, err := doRequest("POST", "/cleanup_cache", body)
+		resp, err := doRequest("POST", "/api/v1/mgmt/remote/cleanup", body)
 		if err != nil {
 			fmt.Fprintln(stdout, "Error:", err)
 			exitFunc(1)

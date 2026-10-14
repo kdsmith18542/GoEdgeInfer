@@ -1,7 +1,7 @@
 # GoEdgeInfer — Build Plan
 
 Date: 2026-10-13. Author: Keith, with review by Muse.
-Status: Phase A not started.
+Status: Phase A complete (2026-10-14). Phase B not started.
 
 ## North star
 
@@ -41,7 +41,7 @@ docs as suspect until Phase A7):
 Do not start Phase B until A1–A3 are done. These are correctness and safety, not
 features.
 
-### A1. Fix the Predict data race (P0)
+### A1. Fix the Predict data race (P0) ✅ 2026-10-14
 
 File: `internal/inference/onnx_runtime.go` (`Predict`, ~L341).
 
@@ -60,7 +60,7 @@ Acceptance:
   distinct inputs under `go test -race ./...` — zero races, all outputs correct.
 - p99 latency regression < 15% vs single-flight baseline.
 
-### A2. Configurable ONNX Runtime library path (P0)
+### A2. Configurable ONNX Runtime library path (P0) ✅ 2026-10-14
 
 File: `internal/inference/onnx_runtime.go` (`NewONNXRuntimeEngine`, ~L40).
 
@@ -76,7 +76,7 @@ place, e.g. `scripts/ort-version.txt`).
 Acceptance: fresh `git clone` → `docker build` → `docker run` serves the test
 model with no host-side ORT install.
 
-### A3. Secrets hygiene (P0)
+### A3. Secrets hygiene (P0) ✅ 2026-10-14
 
 `configs/` currently commits `server.key`, `server.crt`, `ca.crt` to a public
 repo. They are in git history forever.
@@ -91,7 +91,7 @@ Acceptance: `git log --all -- configs/*.key` shows no keys added after this
 date; `SECURITY.md` exists; CI fails if a private key is added
 (pre-commit hook or CI grep).
 
-### A4. Quantized dtype support (P1)
+### A4. Quantized dtype support (P1) ✅ 2026-10-14
 
 Tensors are hardcoded float32. For an *edge* server this is table stakes.
 
@@ -100,7 +100,7 @@ Fix: extend tensor creation/conversion to int8/uint8 (read dtype from
 
 Acceptance: load a quantized (int8) ONNX model, predict, correct output.
 
-### A5. Honest batching (P1)
+### A5. Honest batching (P1) ✅ 2026-10-14 (rename path)
 
 `BatchPredict` currently loops `Predict` sequentially — no throughput gain,
 misleading name.
@@ -109,10 +109,14 @@ Fix: implement true batched inference through the ORT batch dimension where
 the model supports it; otherwise rename to `PredictSequential` and document
 the limitation. Do not ship a lie in a public API.
 
+**Shipped (2026-10-14):** rename path. `PredictSequential` is the honest
+name; `BatchPredict` delegates to it and documents sequential execution in
+the interface. Fused batching is Phase B3.
+
 Acceptance: benchmark in `docs/benchmarks.md` showing tokens/sec for batch=1
 vs batch=8, or the rename + doc.
 
-### A6. Multi-input models (P1)
+### A6. Multi-input models (P1) ✅ 2026-10-14
 
 `Predict` uses only the first input tensor ("Only support single input for
 now" comment, ~L371).
@@ -122,7 +126,7 @@ single-slice form as shorthand for single-input models.
 
 Acceptance: test with a 2-input ONNX model.
 
-### A7. Documentation sync (P1)
+### A7. Documentation sync (P1) ✅ 2026-10-14
 
 README still says `/api/v1/infer` and `/api/v1/models/load` are "not
 implemented yet"; `docs/API.md` documents mock responses (`mock_class_1`).
@@ -132,12 +136,12 @@ Rewrite README + `docs/API.md` from the actual router (`internal/api/router.go`
 Acceptance: a new user can go from README to a successful real prediction
 without hitting a documented endpoint that lies.
 
-### A8. Version-key validation (P2)
+### A8. Version-key validation (P2) ✅ 2026-10-14
 
 Model keys are `id + ":" + version` by string concat. Reject IDs/versions
 containing `:` (and empty IDs) at load time.
 
-### A9. CLI/server API contract mismatch (P1)
+### A9. CLI/server API contract mismatch (P1) ✅ 2026-10-14
 
 `cmd/goedgeinferctl` and the server disagree on every route. The CLI calls
 `GET /models`, `POST /reload`, `POST /predict/:id`, `GET /remote_models`,

@@ -32,7 +32,7 @@ Model IDs and versions must not contain `:`.
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/api/v1/infer/:model_id` | `{"input":[…]\|"input_map":{…}, "version?":…}` |
+| POST | `/api/v1/infer/:model_id` | `{"input":[…] \| {name:[…],…}, "version?":…}` |
 | POST | `/api/v1/infer/:model_id/versions/:version` | same |
 | POST | `/api/v1/infer/batch/:model_id` | `{"inputs":[…]}` |
 | POST | `/api/v1/infer/batch/:model_id/versions/:version` | same |
@@ -48,9 +48,16 @@ Response:
 }
 ```
 
-`input` accepts `[]float32` (flat), `[][]float32` (flattened), or `[]float64`
-(converted). `input_map` (planned, A6) keys input tensors by name for
-multi-input models. Quantized dtypes planned (A4).
+`input` accepts `[]float32` (flat), `[][]float32` (flattened), `[]float64`,
+`[]int8`/`[]uint8`/`[]int32`/`[]int64`, or `[]bool` (converted to the tensor
+dtype read from the model). For multi-input models pass a map keyed by input
+tensor name: `{"input": {"x": […], "mask": […]}}` — a bare slice is shorthand
+for single-input models. Quantized int8/uint8 tensors load and run (plan.md
+A4).
+
+**Batching note:** `/infer/batch/:model_id` runs inputs **sequentially**, one
+session run each — it is not a fused batch and gains no throughput over
+concurrent single predicts. Real dynamic batching is plan.md B3.
 
 ## Management (`/api/v1/mgmt`, JWT when enabled)
 

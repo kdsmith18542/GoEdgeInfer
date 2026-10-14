@@ -25,7 +25,7 @@ func SetupRoutes(r *gin.Engine, api *API, apiKey string, jwtCfg config.JWTConfig
 	v1 := r.Group("/api/v1")
 	v1.Use(
 		middleware.RateLimitMiddleware(10.0, 20), // 10 requests per second with burst of 20
-		middleware.RequestIDMiddleware(),        // Add request ID for tracing
+		middleware.RequestIDMiddleware(),         // Add request ID for tracing
 	)
 
 	// Public endpoints (no auth required)
@@ -39,25 +39,25 @@ func SetupRoutes(r *gin.Engine, api *API, apiKey string, jwtCfg config.JWTConfig
 	{
 		// List all loaded models
 		models.GET("", api.ListModels)
-		
+
 		// Load a new model
 		models.POST("", api.LoadModel)
-		
+
 		// Model-specific operations
 		modelGroup := models.Group("/:model_id")
 		{
 			// Get model info
 			modelGroup.GET("", api.GetModelInfo)
-			
+
 			// Unload a model
 			modelGroup.DELETE("", api.UnloadModel)
-			
+
 			// Versioned model operations
 			versionGroup := modelGroup.Group("/versions/:version")
 			{
 				// Get specific version info
 				versionGroup.GET("", api.GetModelInfo)
-				
+
 				// Unload specific version
 				versionGroup.DELETE("", api.UnloadModel)
 			}
@@ -69,10 +69,10 @@ func SetupRoutes(r *gin.Engine, api *API, apiKey string, jwtCfg config.JWTConfig
 	{
 		// Predict with model ID in path (supports version in request body)
 		infer.POST("/:model_id", api.Predict)
-		
+
 		// Versioned prediction
 		infer.POST("/:model_id/versions/:version", api.Predict)
-		
+
 		// Batch prediction
 		infer.POST("/batch/:model_id", api.BatchPredict)
 		infer.POST("/batch/:model_id/versions/:version", api.BatchPredict)

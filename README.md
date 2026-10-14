@@ -11,8 +11,10 @@ HTTP or gRPC, pay per use.
 
 ## What works today
 
-- **Engines:** ONNX Runtime (real inference, CPU + optional CUDA), TensorFlow
-  Lite (cgo + mock). GGUF/llama.cpp backend is planned (see `plan.md` B1).
+- **Engines:** ONNX Runtime (real inference, CPU + optional CUDA; float and
+  quantized int8/uint8 dtypes; single- and multi-input models; per-model
+  session pool for concurrent requests), TensorFlow Lite (cgo + mock).
+  GGUF/llama.cpp backend is planned (see `plan.md` B1).
 - **Model management:** versioned load/unload, SHA256 integrity check, ECDSA
   signature verification, S3/MinIO registry, Hugging Face pulls planned.
 - **Serving:** HTTP REST (`/api/v1`), gRPC (`GoEdgeInferService`), worker pool
@@ -23,7 +25,8 @@ HTTP or gRPC, pay per use.
 ## Quickstart
 
 ```bash
-# 1. ONNX Runtime library (or set ORT_LIB_PATH to your install)
+# 1. ONNX Runtime library — set ORT_LIB_PATH, or onnxruntime.lib_path in
+#    configs/config.yaml, or install to a well-known path (see plan.md A2)
 export ORT_LIB_PATH=/usr/local/lib/libonnxruntime.so
 
 # 2. Run

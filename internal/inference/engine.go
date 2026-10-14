@@ -43,7 +43,10 @@ type Engine interface {
 	// Predict performs inference using the specified model
 	Predict(ctx context.Context, modelID, version string, input interface{}) (*Prediction, error)
 
-	// BatchPredict performs batch inference using the specified model
+	// BatchPredict runs a set of inputs through the model. Implementations
+	// that cannot fuse the batch through the engine's batch dimension must
+	// document that this is sequential (see PredictSequential in the ONNX
+	// engine). Real dynamic batching is plan.md B3.
 	BatchPredict(ctx context.Context, modelID, version string, inputs []interface{}) ([]*Prediction, error)
 
 	// GetModelInfo returns information about a loaded model
@@ -188,7 +191,7 @@ func (m *MockEngine) UnloadModelWithTracing(modelID, version string, tracer trac
 
 // Errors
 var (
-	ErrNotImplemented      = NewInferenceError("not implemented")
+	ErrNotImplemented       = NewInferenceError("not implemented")
 	ErrModelVersionNotFound = NewInferenceError("model version not found")
 )
 

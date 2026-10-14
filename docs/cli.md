@@ -7,11 +7,9 @@ export GOEDGEINFER_SERVER=http://localhost:8080
 export GOEDGEINFER_APIKEY=yourkey
 ```
 
-> **Known bug (plan.md A9):** the CLI's request paths don't match the
-> server's `/api/v1` routes, and `--server`/`--apikey` flags are silently
-> ignored (only env vars reach requests). The table below documents the
-> **intended** contract — the server (`internal/api/router.go`) is source of
-> truth. Fix the CLI before trusting this doc.
+> Routes and `--server`/`--apikey` flags are verified against a live server
+> by `cmd/goedgeinferctl/contract_test.go` (plan.md A9). The server
+> (`internal/api/router.go`) is the source of truth.
 
 | Command | Maps to |
 |---|---|
@@ -27,7 +25,8 @@ export GOEDGEINFER_APIKEY=yourkey
 | `jwt generate <secret> <alg> <iss> <aud> <role> <scope> [expire_min]` | local JWT mint (HS256) |
 | `jwt validate <token> <secret> <alg>` | local JWT check |
 
-## Contract test (required by A9)
+## Contract test (A9)
 
-Boot the server, run every command above against it, assert success. This
-test is the reason the CLI/server drift happened — there wasn't one.
+`go test ./cmd/goedgeinferctl/ -run TestCLI_` boots the real router and runs
+every command against it, asserting success. This test is why the old
+CLI/server route drift cannot come back.

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      ORT_VERSION: "1.22.0" # keep in sync with scripts/ort-version.txt
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install ONNX Runtime
+        run: |
+          curl -sSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" -o /tmp/ort.tgz
+          mkdir -p "$HOME/onnxruntime"
+          tar -xzf /tmp/ort.tgz -C "$HOME/onnxruntime"
+          echo "ORT_LIB_PATH=$HOME/onnxruntime/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so" >> "$GITHUB_ENV"
+
+      - name: No private keys in tree
+        run: |
+          bad=$(git ls-files | grep -E '\.(key|pem)$' || true)
+          if [ -n "$bad" ]; then
+            echo "Private key material must never be committed (see SECURITY.md):"
+            echo "$bad"
+            exit 1
+          fi
+          bad=$(git grep -l -E 'BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY' -- . || true)
+          if [ -n "$bad" ]; then
+            echo "PEM private key blocks found in tracked files:"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race ./... -timeout 15m
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61.0
+          args: --timeout=5m

@@ -47,6 +47,9 @@ type WorkerPool struct {
 func NewWorkerPool(engine inference.Engine, numWorkers int, queue *persistence.PersistentQueue, pipeline PipelineRunner, tracer trace.Tracer) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	if tracer == nil {
+		tracer = trace.NewNoopTracerProvider().Tracer("")
+	}
 	pool := &WorkerPool{
 		tasks:           make(chan Task, 100), // Buffer up to 100 tasks
 		engine:          engine,
@@ -69,9 +72,6 @@ func NewWorkerPool(engine inference.Engine, numWorkers int, queue *persistence.P
 
 // worker processes tasks from the queue
 func (p *WorkerPool) worker(id int) {
-	if p.tracer == nil {
-		p.tracer = trace.NewNoopTracerProvider().Tracer("")
-	}
 	ctx, span := p.tracer.Start(p.ctx, "WorkerPool.worker")
 	defer span.End()
 

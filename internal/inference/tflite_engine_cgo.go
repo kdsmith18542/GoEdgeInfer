@@ -253,7 +253,7 @@ func (e *TFLiteEngine) Predict(ctx context.Context, modelID, version string, inp
 	return prediction, nil
 }
 
-// BatchPredict performs batch inference by iterating over inputs.
+// BatchPredict runs inputs one at a time (sequential, not fused batching).
 func (e *TFLiteEngine) BatchPredict(ctx context.Context, modelID, version string, inputs []interface{}) ([]*Prediction, error) {
 	e.mu.RLock()
 	_, exists := e.models[modelID]

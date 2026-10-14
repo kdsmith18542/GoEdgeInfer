@@ -10,20 +10,20 @@ import (
 
 // RateLimiter implements a token bucket rate limiter
 type RateLimiter struct {
-	mu          sync.Mutex
-	lastCheck   time.Time
-	rate        float64   // tokens per second
-	capacity    float64   // maximum tokens in bucket
-	tokens      float64   // current number of tokens
+	mu        sync.Mutex
+	lastCheck time.Time
+	rate      float64 // tokens per second
+	capacity  float64 // maximum tokens in bucket
+	tokens    float64 // current number of tokens
 }
 
 // NewRateLimiter creates a new rate limiter with the specified rate and capacity
 func NewRateLimiter(ratePerSecond float64, capacity int) *RateLimiter {
 	return &RateLimiter{
 		lastCheck: time.Now(),
-		rate:     ratePerSecond,
-		capacity: float64(capacity),
-		tokens:   float64(capacity),
+		rate:      ratePerSecond,
+		capacity:  float64(capacity),
+		tokens:    float64(capacity),
 	}
 }
 

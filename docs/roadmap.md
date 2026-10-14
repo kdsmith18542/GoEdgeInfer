@@ -14,13 +14,16 @@
 - Prometheus metrics, OpenTelemetry tracing, structured logging
 - `goedgeinferctl` CLI, Dockerfile, config system
 
-## Now (plan.md Phase A — correctness)
+## Now (plan.md Phase B — market relevance)
 
-Session-pool race fix · configurable ORT path · secrets purge · quantized
-dtypes · honest batching · multi-input · CLI/server contract fix · doc sync.
-**Gate: no Phase B until A1–A3 are merged.**
+Phase A is done (2026-10-14): session-pool race fix, configurable ORT path,
+secrets purge, quantized dtypes, honest sequential batching, multi-input,
+CLI/server contract fix + contract test, doc sync, CI with `-race` and the
+no-private-keys gate. A1–A3 gate satisfied.
 
-## Next (plan.md Phase B — market relevance)
+Starting B1: GGUF / llama.cpp backend.
+
+## Next (plan.md Phase B detail)
 
 GGUF/llama.cpp backend · OpenAI-compatible API (`/v1/chat/completions`,
 `/v1/embeddings`) · real dynamic batching · Hugging Face pulls · published
