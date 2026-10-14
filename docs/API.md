@@ -1,139 +1,88 @@
-# GoEdgeInfer API Documentation
+# GoEdgeInfer API Reference
 
-## Base URL
-All API endpoints are relative to the base URL: `http://localhost:8080`
+Base URL: `http://localhost:8080`. All `/api/v1/*` paths (unless noted) require
+the `X-API-Key` header and are rate-limited (default 10 rps, burst 20; per-key
+quotas planned). Every response carries an `X-Request-ID`.
 
-## Authentication
-Currently, the API does not require authentication. In a production environment, consider adding API keys or JWT tokens.
+> Verified against `internal/api/router.go`. The old version of this doc
+> described mock responses — those were replaced.
 
-## Endpoints
+## System
 
-### Health Check
-Check if the API is running.
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/health` | none | liveness probe |
+| GET | `/api/v1/public/health` | none | same, under versioned prefix |
+| GET | `/metrics` | none | Prometheus scrape |
 
-- **URL**: `/health`
-- **Method**: `GET`
-- **Response**:
-  ```json
-  {
-    "status": "ok"
-  }
-  ```
+## Models
 
-### List Loaded Models
-Get a list of all loaded models.
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| GET | `/api/v1/models` | — | list loaded `id:version` keys |
+| POST | `/api/v1/models` | `{"model_id","model_path","version?"}` | `model_path` may be `s3://bucket/key`; SHA256 verified, ECDSA sig verified if enabled |
+| GET | `/api/v1/models/:model_id` | — | info (latest or unversioned) |
+| DELETE | `/api/v1/models/:model_id` | — | unload |
+| GET | `/api/v1/models/:model_id/versions/:version` | — | info for a version |
+| DELETE | `/api/v1/models/:model_id/versions/:version` | — | unload a version |
 
-- **URL**: `/models`
-- **Method**: `GET`
-- **Response**:
-  ```json
-  [
-    "model-1",
-    "model-2"
-  ]
-  ```
+Model IDs and versions must not contain `:`.
 
-### Load a Model
-Load a new model into the inference engine.
+## Inference
 
-- **URL**: `/models`
-- **Method**: `POST`
-- **Request Body**:
-  ```json
-  {
-    "model_id": "test-model",
-    "model_path": "/path/to/model.tflite"
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "model_id": "test-model",
-    "status": "model_loaded"
-  }
-  ```
+| Method | Path | Body |
+|---|---|---|
+| POST | `/api/v1/infer/:model_id` | `{"input":[…]\|"input_map":{…}, "version?":…}` |
+| POST | `/api/v1/infer/:model_id/versions/:version` | same |
+| POST | `/api/v1/infer/batch/:model_id` | `{"inputs":[…]}` |
+| POST | `/api/v1/infer/batch/:model_id/versions/:version` | same |
 
-### Unload a Model
-Unload a model from the inference engine.
+Response:
 
-- **URL**: `/models/:model_id`
-- **Method**: `DELETE`
-- **URL Parameters**:
-  - `model_id`: The ID of the model to unload
-- **Response**:
-  ```json
-  {
-    "model_id": "test-model",
-    "status": "model_unloaded"
-  }
-  ```
-
-### Make a Prediction
-Make a prediction using a loaded model.
-
-- **URL**: `/predict/:model_id`
-- **Method**: `POST`
-- **URL Parameters**:
-  - `model_id`: The ID of the model to use for prediction
-- **Request Body**:
-  ```json
-  {
-    "input": [0.1, 0.2, 0.3, 0.4]
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "model_id": "test-model",
-    "output": [
-      {
-        "label": "mock_class_1",
-        "score": 0.95
-      },
-      {
-        "label": "mock_class_2",
-        "score": 0.03
-      },
-      {
-        "label": "mock_class_3",
-        "score": 0.02
-      }
-    ],
-    "latency": 0,
-    "metadata": {
-      "framework": "tflite-mock",
-      "input_shape": [1, 224, 224, 3],
-      "output_shape": [1, 1000],
-      "note": "This is a mock implementation. Install TensorFlow Lite for actual inference."
-    }
-  }
-  ```
-
-## Error Responses
-
-### 400 Bad Request
 ```json
 {
-  "error": "Invalid request format"
+  "model_id": "mnist",
+  "output": { "data": [0.01, 0.97, 0.02], "shape": [3], "model_id": "mnist" },
+  "metadata": { "engine": "onnxruntime", "latency_ms": 4 },
+  "latency_ms": 4
 }
 ```
 
-### 404 Not Found
-```json
-{
-  "error": "Model not found"
-}
-```
+`input` accepts `[]float32` (flat), `[][]float32` (flattened), or `[]float64`
+(converted). `input_map` (planned, A6) keys input tensors by name for
+multi-input models. Quantized dtypes planned (A4).
 
-### 500 Internal Server Error
-```json
-{
-  "error": "Internal server error"
-}
-```
+## Management (`/api/v1/mgmt`, JWT when enabled)
 
-## Rate Limiting
-Rate limiting is not currently implemented but should be considered for production use.
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/mgmt/remote/models` | list remote registry |
+| POST | `/mgmt/remote/upload` | `{"local_path","object_key"}` |
+| POST | `/mgmt/remote/delete` | `{"object_key"}` — irreversible |
+| POST | `/mgmt/remote/cleanup` | `{"cache_dir","keep":[…]}` |
+| POST | `/mgmt/system/reload` | reload config/models |
+| GET | `/mgmt/system/config` | admin role only |
 
-## Versioning
-This is version 1.0.0 of the API.
+## gRPC
+
+`proto/infer.proto` — `GoEdgeInferService`:
+
+- `Infer(InferRequest) → InferResponse` (unary)
+- `StreamInfer(stream InferRequest) → stream InferResponse` (bidi, for
+  audio/video frame streams)
+
+## OpenAI-compatible [PLANNED — Phase B]
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/chat/completions` | SSE streaming + non-stream |
+| POST | `/v1/embeddings` | |
+| GET | `/v1/models` | |
+
+Acceptance: OpenAI Python SDK works with only `base_url` changed.
+
+## Errors
+
+`400` malformed input · `401` missing/invalid API key · `403` JWT role
+insufficient · `404` model not found · `429` rate limited · `500` inference
+failure. All errors are JSON: `{"error":"…"}`.

@@ -1,39 +1,39 @@
-# GoEdgeInfer Metrics & Observability
+# Metrics & Observability
 
-## Prometheus Metrics
-GoEdgeInfer exposes a `/metrics` endpoint (HTTP) for Prometheus scraping. Metrics are implemented using the Prometheus Go client and include per-model and system-level statistics.
+## Prometheus (`GET /metrics`, no auth)
 
-### Exposed Metrics
-- `goedgeinfer_inference_requests_total{model_id}`: Total number of inference requests per model.
-- `goedgeinfer_inference_duration_seconds{model_id}`: Histogram of inference latency per model (seconds).
-- `goedgeinfer_inference_errors_total{model_id}`: Total number of inference errors per model.
-- `goedgeinfer_queue_depth`: Current depth of the persistent inference request queue.
+Per-model labels are `model_id` (and `version` where recorded):
 
-### Example Prometheus Scrape
-```
-# HELP goedgeinfer_inference_requests_total The total number of inference requests (by model)
-# TYPE goedgeinfer_inference_requests_total counter
-goedgeinfer_inference_requests_total{model_id="mnist"} 42
-# HELP goedgeinfer_inference_duration_seconds Duration of inference requests in seconds (by model)
-# TYPE goedgeinfer_inference_duration_seconds histogram
-...
-# HELP goedgeinfer_queue_depth Current depth of the inference request queue
-# TYPE goedgeinfer_queue_depth gauge
-goedgeinfer_queue_depth 0
-```
+- `goedgeinfer_inference_requests_total{model_id}` — counter
+- `goedgeinfer_inference_duration_seconds{model_id}` — histogram
+- `goedgeinfer_inference_errors_total{model_id}` — counter
+- `goedgeinfer_model_load_total{model_id,version,status}` — counter
+- `goedgeinfer_model_load_duration_seconds{model_id,version}` — histogram
+- `goedgeinfer_model_unload_total{model_id,version,status}` — counter
+- `goedgeinfer_queue_depth` — gauge (durable mode)
+- `goedgeinfer_tokens_in_total{api_key_id,model_id}` — counter **[planned, C1]**
+- `goedgeinfer_tokens_out_total{api_key_id,model_id}` — counter **[planned, C1]**
 
-## System Health (Planned/Extensible)
-- CPU, memory, and disk usage can be added using [prometheus/client_golang](https://github.com/prometheus/client_golang) collectors or [github.com/shirou/gopsutil](https://github.com/shirou/gopsutil).
-- Health endpoint: `/health` returns a simple status for liveness/readiness probes.
+System collectors: `gopsutil` is a dependency — CPU/mem/disk collectors are
+wired, not "planned" (the old doc was stale).
 
-## How to Use
-1. Start GoEdgeInfer.
-2. Point Prometheus to `http://<host>:<port>/metrics`.
-3. Use Grafana or Prometheus UI to visualize metrics.
+## Tracing
 
-## Extending Observability
-- Add custom metrics for batch size, model load/unload times, or hardware utilization.
-- Integrate OpenTelemetry for distributed tracing (see blueprint for future work).
+OpenTelemetry is implemented: model load/unload and inference create spans
+(`ModelManager.LoadModel`, engine Predict paths). Exporter is stdout by
+default; point it at your collector via standard OTel env vars.
 
----
-See also: `docs/api_worker_integration.md`, `GoEdgeInfer.md` for more on architecture and observability.
+## Health
+
+`GET /health` — liveness/readiness probe (no auth, no rate limit).
+
+## Benchmarks
+
+`docs/benchmarks.md` (planned, B6): tokens/sec, TTFT, peak RSS for reference
+models on reference hardware, re-run per release. Marketing-grade — keep it
+honest.
+
+## Extending
+
+Add per-endpoint latency histograms before adding new metric types. Cardinality
+discipline: `api_key_id` labels only on the token counters, never raw keys.

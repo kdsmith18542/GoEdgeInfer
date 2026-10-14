@@ -1,44 +1,31 @@
-# Persistent Queue (BadgerDB) in GoEdgeInfer
+# Persistent Queue (BadgerDB) — queue modes
 
-## Overview
-The persistent queue is a disk-backed FIFO queue implemented using BadgerDB. It ensures that inference requests are not lost across restarts or failures, providing store-and-forward capability for edge scenarios.
+> **Pivot (2026-10):** durability used to be unconditional — every inference
+> request hit disk. It's now opt-in. Realtime is the default.
 
-## Location
-- Implementation: `internal/persistence/queue.go`
-- Tests: `internal/persistence/queue_test.go`
+## Modes (`queue.mode` in config)
 
-## Usage
-- The queue is initialized in `main.go` and passed to the worker pool.
-- All inference tasks are enqueued to disk on submission.
-- On startup, any unprocessed tasks are recovered and re-enqueued for processing.
+| Mode | Behavior | Use for |
+|---|---|---|
+| `realtime` (default) | in-memory channel dispatch; failures return to caller immediately | live serving, edge inference |
+| `durable` | requests written to BadgerDB before dispatch; unprocessed tasks recovered on startup | offline batch jobs, store-and-forward on flaky networks |
 
-## API
-```
-NewPersistentQueue(path string) (*PersistentQueue, error)
-Enqueue(item interface{}) error
-Dequeue(out interface{}) error
-Close() error
-```
+## Implementation
 
-## Example
-```
-queue, _ := persistence.NewPersistentQueue("./data/queue")
-queue.Enqueue(MyTask{...})
-var task MyTask
-queue.Dequeue(&task)
-queue.Close()
-```
+- `internal/persistence/queue.go` — `NewPersistentQueue(path)`,
+  `Enqueue` / `Dequeue` / `Close`; items stored as JSON blobs.
+- `internal/worker/pool.go` — consumes the queue only in `durable` mode.
+- Queue directory must be on persistent storage. Exposed metric:
+  `goedgeinfer_queue_depth`.
 
-## Integration
-- The worker pool uses the persistent queue for all inference tasks.
-- The API and gRPC endpoints are automatically durable.
+## Rationale
+
+Disk on the hot path is a latency tax. Most inference traffic wants fast
+failure + client retry, not store-and-forward. Durability is a feature for
+batch workloads — so it's a mode, not the architecture.
 
 ## Test
-Run:
-```
-go test ./internal/persistence/...
-```
 
-## Notes
-- The queue stores items as JSON blobs for generality.
-- The queue directory should be on persistent storage for durability.
+```bash
+go test ./internal/persistence/... ./internal/worker/...
+```
