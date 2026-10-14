@@ -1,318 +1,161 @@
+# GoEdgeInfer: Architecture Blueprint (revised 2026-10)
+
 NO STUBB!! PRODUCTION GRADE CODE ONLY!! SPECS ARE IN THE DOCS FOLDER!!
 
-GoEdgeInfer: A Lightweight, High-Performance Agent for Edge AI/ML Inference (Enhanced Blueprint)
-1. Introduction
-GoEdgeInfer aims to provide a robust, lightweight, and high-performance solution for deploying and executing Artificial Intelligence (AI) and Machine Learning (ML) models directly at the edge or within distributed systems. Leveraging Golang's inherent strengths in concurrency, efficiency, and small binary size, GoEdgeInfer will act as an inference agent that can load pre-trained models, perform predictions with low latency, and integrate seamlessly with data pipelines. The primary goal is to enable real-time decision-making closer to the data source, reducing reliance on centralized cloud resources, minimizing network latency, and improving data privacy and security for a broad range of edge AI applications.
+> This is the revised blueprint. The 2026-05 original described a generic
+> "edge AI agent" in future tense; most of it is now built, and the product
+> direction has pivoted (see §1). Sections marked **[PIVOT]** changed with the
+> pivot; **[DONE]** already exists in code; **[NEXT]** is plan.md Phase B/C.
+
+## 1. Product thesis [PIVOT]
+
+GoEdgeInfer is a **metered, multi-tenant inference server for quantized small
+models on CPU-only edge hardware**. The product is the SaaS-ification —
+metering, tenancy, billing, and an OpenAI-compatible API — not the inference
+kernels. llama.cpp and ONNX Runtime already exist and are not reimplemented.
+
+The wedge: a quantized 1–3B model serving at ≥10 tok/s on a $6–12/mo CPU VPS.
+If the B-gate in plan.md fails, the cost thesis fails with it.
+
+Explicit non-goals: training, GPU-cluster orchestration, K8s operators,
+explainable-AI/RL-agents/digital-twins/federated-learning (cut from the old
+§7 — scope creep, not the product), rebuilding inference kernels.
+
+## 2. Core principles
+
+- **Correct under concurrency.** Every engine is safe for concurrent Predict;
+  session/tensor pooling per model, `-race` clean in CI. (This was a real bug:
+  plan.md A1.)
+- **Quantized-first.** int8/uint8 dtypes are table stakes for edge, not a
+  Phase-4 consideration. float32-only was a gap (plan.md A4).
+- **Ecosystem-compatible.** OpenAI-compatible endpoints alongside the native
+  API, so existing clients work unmodified (plan.md B2).
+- **Single binary, no required services.** SQLite default metering, BadgerDB
+  queue opt-in. Self-hosting must stay one binary + one config file.
+- **No silent failures.** No mocks in the serving path; batching that doesn't
+  batch gets renamed, not shipped (plan.md A5).
+- **Docs in the same PR as code.** Doc drift is how the old README lied about
+  "not implemented yet" endpoints for months.
+
+## 3. Architecture [DONE, with corrections]
+
+Single agent process. Actual component map (the old blueprint's
+`internal/runtime`, `internal/manager`, `internal/health` never existed):
+
+```
+                    ┌──────────────────────────────────────┐
+                    │           GoEdgeInfer                │
+  clients ──HTTP──▶ │  api (gin) ──▶ worker pool ──┐       │
+         ──gRPC──▶ │  grpcapi ────────────────────┘       │
+                    │      │                               │
+                    │      ▼                               │
+                    │  processing pipeline                 │
+                    │  (pre/post steps, config-defined)    │
+                    │      │                               │
+                    │      ▼                               │
+                    │  inference engines (Engine iface)    │
+                    │   ├── onnxruntime  [DONE]            │
+                    │   ├── tflite (cgo) [DONE]            │
+                    │   ├── tflite mock [tests only]      │
+                    │   └── gguf/llama.cpp [NEXT, B1]     │
+                    │      │                               │
+                    │      ▼                               │
+                    │  model manager                       │
+                    │  (versioning, SHA256, ECDSA sig,     │
+                    │   S3/MinIO + HF download)           │
+                    │                                      │
+                    │  persistence: BadgerDB queue         │
+                    │   mode=realtime (default) | durable  │
+                    │   [PIVOT — was always-on]           │
+                    │                                      │
+                    │  middleware: api-key → JWT → RBAC → │
+                    │   per-key rate limit → request id   │
+                    │                                      │
+                    │  observability: Prometheus, OTel     │
+                    │  mgmt: /api/v1/mgmt/* (JWT, RBAC)   │
+                    │  billing: metering → Stripe/BTCPay  │
+                    │   [NEXT, plan.md C1–C2]             │
+                    └──────────────────────────────────────┘
+```
+
+### Concurrency model [PIVOT]
+
+The old blueprint said "implement a pool of ONNX Runtime sessions" — that
+line was never implemented and its absence caused the A1 data race. The rule
+now: **each engine maintains a pool of N session+tensor sets per loaded
+model** (N = worker pool size, configurable); `Predict` checks one out
+exclusively and returns it. No shared mutable tensors across goroutines,
+ever. Concurrency tests are mandatory per engine.
+
+### Backends
+
+| Backend | Status | Notes |
+|---|---|---|
+| ONNX Runtime (`onnxruntime_go`) | DONE | CPU + CUDA provider; lib path from config/env (`ORT_LIB_PATH`), never hardcoded (was a bug: A2) |
+| TFLite cgo | DONE | needs TF Lite C library at build |
+| TFLite mock | tests only | must never serve production traffic |
+| GGUF / llama.cpp | NEXT (B1) | the LLM-at-edge path; pick bindings with prebuilt binaries |
+
+### Queue modes [PIVOT]
+
+- `realtime` (default): in-memory channel dispatch, client-visible errors,
+  no disk writes on the hot path.
+- `durable`: BadgerDB store-and-forward for offline/batch workloads;
+  recovery on startup. Opt-in via `queue.mode`.
+
+The old spec made durability the default for all inference traffic — wrong
+for real-time edge; disk on the hot path is a latency tax most requests
+shouldn't pay.
 
-2. Core Principles
-High Performance & Low Latency: Optimized for rapid model inference, crucial for real-time edge applications.
+## 4. APIs
 
-Resource Efficiency: Minimal CPU, memory, and disk footprint, suitable for constrained edge devices.
+Native (DONE, see `docs/API.md` for the full table):
+`GET/POST /api/v1/models…`, `POST /api/v1/infer/:model_id[/versions/:v]`,
+`POST /api/v1/infer/batch/…`, `/api/v1/mgmt/*` (JWT), gRPC
+`GoEdgeInferService.{Infer,StreamInfer}`.
 
-Model Agnostic (via standard formats): Support common model interchange formats (e.g., ONNX) to allow flexibility in model training frameworks.
+OpenAI-compatible [NEXT] (B2): `POST /v1/chat/completions` (SSE + non-stream),
+`POST /v1/embeddings`, `GET /v1/models`. Acceptance: OpenAI Python SDK works
+with only `base_url` changed.
 
-Flexible Integration: Provide various interfaces (e.g., HTTP API, gRPC, local function calls) for applications to submit inference requests.
+## 5. Model management [DONE]
 
-Resilient: Handle inference requests efficiently even under varying load, with potential for batching and queueing, and robustly manage network intermittency.
+Versioned load/unload/hot-reload via API, CLI, or config; S3/MinIO + (planned)
+Hugging Face pulls with SHA256 verification; ECDSA signature verification
+optional at load; model IDs/versions must not contain `:` (key separator).
 
-Easy to Deploy & Manage: Single binary deployment, minimal external dependencies, and built-in remote management capabilities.
+## 6. Billing [NEXT] (plan.md C1–C2, see `docs/billing.md`)
 
-Extensible: Designed for future expansion to support more model runtimes, hardware accelerators, custom processing pipelines, and advanced monitoring.
+Per-API-key metering (tokens in/out, requests, compute-ms; SQLite default) →
+plan quotas → Stripe metered subscriptions + self-hosted BTCPay Server
+(Bitcoin/Lightning, 0% fees, priced in USD). Crypto is a checkout option,
+not the only rail.
 
-Secure by Design: Incorporate security best practices for model integrity, data privacy, and access control.
+## 7. Security
 
-3. Architecture Overview
-GoEdgeInfer will primarily consist of a single agent process that can be deployed on edge devices, IoT gateways, or within microservices.
+API keys on inference paths; JWT + RBAC on `/api/v1/mgmt/*`; per-key rate
+limits; model signature verification; **no secrets in the repo**
+(`configs/*.key` committed in 2026-05 — removed, rotated, CI-grepped; see
+`SECURITY.md`, plan.md A3).
 
-+-------------------+      +-------------------+      +-------------------+
-| Data Source/      |      | GoEdgeInfer Agent |      | External Services |
-| Application       |----->| (Inference Engine)|----->| (e.g., Data Lake, |
-| (e.g., Sensor Data,|      |                   |      | Alerting System,  |
-|  Camera Feed,     |      | +---------------+ |      | Model Registry,   |
-|  User Input)      |      | | Inference API   |      | Orchestrator)     |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Request Queue/  |      |                   |
-|                   |      | | Batching        |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Pre/Post-Proc.  |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Model Runtime   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Model Loader    |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Persistence/    |      |                   |
-|                   |      | | Buffering       |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      |                   |      |                   |
-|                   |      | +---------------+ |      |                   |
-|                   |      | | Health/Metrics/ |      |                   |
-|                   |      | | Logging         |      |                   |
-|                   |      | +---------------+ |      |                   |
-+-------------------+      +-------------------+      +-------------------+
+## 8. Roadmap
 
-Key Components (Expanded):
+Superseded by `docs/roadmap.md` (done / now / next) and `plan.md` (phases +
+kill gates). The old Phase 1–4 text below is kept for history and marked.
 
-Inference API/Gateway: Exposes endpoints (e.g., HTTP, gRPC) for applications to submit data for inference. This module handles request parsing, validation, rate limiting, and queuing.
+<details>
+<summary>Original 2026-05 roadmap (historical — mostly built)</summary>
 
-Request Queue/Batching: An internal queue to manage incoming inference requests, allowing for batch processing to maximize throughput on the underlying model runtime, especially for hardware accelerators.
+- Phase 1 (MVP): ONNX load+infer, HTTP API, config, logging, tests — DONE.
+- Phase 2: gRPC, pre/post-processing, Prometheus, persistent buffer — DONE
+  (buffer since pivoted to opt-in).
+- Phase 3: hot-reload, S3 registry, OTel, CLI, remote config — DONE.
+- Phase 4: execution providers, signature verification, quantization — DONE
+  except quantization dtype support (moved to Phase A).
+</details>
 
-Pre/Post-Processing Module: Handles complex data transformations before (e.g., normalization, resizing images, feature engineering) and after (e.g., converting model output to human-readable format, applying thresholds, inverse transformations) model inference. This module will be highly configurable and potentially extensible.
+## 9. Benchmarks
 
-Model Runtime Integration: The core component responsible for loading and executing the ML model. This will involve FFI (Foreign Function Interface) via CGO to interact with optimized C/C++ libraries (e.g., ONNX Runtime, TensorFlow Lite). It will also manage specific execution providers for various hardware accelerators.
-
-Model Loader & Manager: Manages the loading, unloading, hot-reloading, and versioning of ML models from local storage or remote sources (e.g., a model registry, S3-compatible storage, Git LFS). It will also handle model integrity verification (e.g., checksums, digital signatures).
-
-Persistence/Buffering Module: A robust, disk-backed buffer for inference requests and results. This ensures data integrity and enables "store-and-forward" capabilities during intermittent network connectivity, crucial for edge environments.
-
-Health & Metrics Module: Collects comprehensive operational metrics of the agent (e.g., inference requests/sec, latency per model, model load times, errors, queue depth) and system metrics (CPU, memory, disk I/O, network I/O). Exposes these via a Prometheus endpoint and potentially pushes to a remote observability platform.
-
-Logging & Tracing Module: Provides structured logging for all agent operations and integrates internal tracing to understand the flow of an inference request through the agent's pipeline (e.g., using OpenTelemetry internally).
-
-Configuration & Remote Management Module: Manages agent configuration (model paths, API ports, runtime settings, pre/post-processing rules). This module will also support secure remote updates for both configuration and the agent binary itself, potentially integrating with an edge orchestration platform.
-
-Security Module: Handles authentication and authorization for API access, model integrity checks, and potentially secure boot integration for edge devices.
-
-4. Technical Details & Implementation Plan
-4.1. Language and Dependencies
-Language: Go (Golang)
-
-Key Libraries (Initial & Enhanced):
-
-github.com/spf13/viper: For robust configuration management.
-
-github.com/gin-gonic/gin or github.com/labstack/echo: For building a fast HTTP API.
-
-google.golang.org/grpc and google.golang.org/protobuf: For gRPC API and internal communication.
-
-github.com/prometheus/client_golang/prometheus: For internal agent metrics.
-
-github.com/sirupsen/logrus or zap: For structured logging.
-
-go.opentelemetry.io/otel: For internal tracing within GoEdgeInfer.
-
-github.com/dgraph-io/badger or github.com/boltdb/bolt: For a lightweight, embedded, persistent key-value store for buffering.
-
-github.com/minio/minio-go (or similar): For S3-compatible model registry integration.
-
-Crucially, for Model Runtime:
-
-Option 1 (Recommended for flexibility & performance): github.com/yalue/onnxruntime_go (the Go binding for ONNX Runtime actually used in this codebase) combined with CGO. This provides broad model support and leverages highly optimized C/C++ inference. Make sure the ONNX Runtime shared library (libonnxruntime.so) is installed and accessible as described in the code and README.
-
-Option 2 (For TensorFlow Lite): Direct CGO bindings to TensorFlow Lite C API for highly optimized mobile/edge deployment.
-
-Option 3 (For simpler models): Pure Go ML libraries like gorgonia.org/gorgonia (for graph-based computation) or gonum.org/v1/gonum/mat (for linear algebra) for models that can be implemented directly in Go, avoiding CGO complexity.
-
-4.2. Model Runtime & Inference Execution
-Primary Approach (ONNX Runtime via CGO): This remains the most versatile. The CGO wrappers will be designed to be robust and handle memory efficiently.
-
-Execution Providers: The runtime_config will allow specifying execution providers (e.g., CPUExecutionProvider, CUDAExecutionProvider, TensorrtExecutionProvider, OpenVINOExecutionProvider) to leverage available hardware accelerators.
-
-Concurrency Management: Implement a pool of ONNX Runtime sessions/contexts to handle concurrent inference requests without blocking, ensuring thread-safety around CGO calls.
-
-Data Exchange: Optimize data marshalling/unmarshalling between Go and C/C++ to minimize overhead. Consider zero-copy approaches where feasible.
-
-4.3. Inference API/Gateway
-HTTP REST API:
-
-Endpoint: /infer (POST request).
-
-Input: JSON payload with data (e.g., base64 encoded image, array of numbers) and optional model_version, request_id.
-
-Output: JSON payload with results and metadata (e.g., inference latency).
-
-Request Validation: Implement JSON schema validation for incoming inference requests.
-
-Rate Limiting: Add configurable rate limiting to prevent overload.
-
-gRPC API:
-
-Define a comprehensive .proto file for InferRequest (with flexible input types like bytes, repeated float, repeated int32, or a generic google.protobuf.Any for complex structures) and InferResponse.
-
-Support streaming gRPC for continuous data feeds (e.g., video frames).
-
-Request Queueing: Implement a bounded channel or a dedicated queue (e.g., using the embedded KV store) to buffer incoming requests before processing, allowing for batching.
-
-4.4. Pre/Post-Processing (Enhanced)
-Configurable Pipeline: Allow users to define a sequence of pre-processing and post-processing steps in the configuration. Each step would have a type and parameters.
-
-Pre-processing Examples: resize_image, normalize_pixels, convert_to_grayscale, flatten_array, extract_features.
-
-Post-processing Examples: softmax, apply_threshold, map_to_labels, bounding_box_nms, json_format_output.
-
-Extensibility (Advanced): Explore a plugin system where users can provide custom Go plugins (compiled as shared libraries) or even simple WebAssembly modules for highly custom pre/post-processing logic. This would require careful security considerations.
-
-4.5. Model Loading and Management (Enhanced)
-Model Registry Integration:
-
-Support pulling models from remote S3-compatible buckets (e.g., MinIO, AWS S3, Google Cloud Storage) or a dedicated model registry service.
-
-Implement authentication for remote access.
-
-Model Versioning: Allow specifying a model_version in inference requests or configuration. The agent will manage multiple loaded model versions concurrently.
-
-Hot Reloading: Implement a robust mechanism to reload models (e.g., on a timer, via an API call, or in response to a message from an orchestration plane) without service interruption, ensuring zero downtime for model updates.
-
-Model Integrity: Implement checksum verification (e.g., SHA256) for downloaded models to ensure integrity. Consider digital signature verification for enhanced security.
-
-Model Caching: Efficiently cache loaded models in memory, potentially offloading less frequently used models to disk.
-
-4.6. Persistence and Buffering (New/Expanded)
-Disk-Backed Queue: Implement a persistent queue using an embedded key-value store (e.g., BadgerDB, BoltDB) to store incoming inference requests and their results.
-
-Store-and-Forward: During network outages or when the remote data sink is unavailable, inference results can be buffered locally and forwarded once connectivity is restored.
-
-Configurable Retention: Allow configuration of how long data is retained in the local buffer.
-
-4.7. Health, Metrics, and Logging (Enhanced)
-Comprehensive Metrics: Beyond basic agent metrics, track:
-
-Per-model inference latency (min, max, avg, percentiles).
-
-Inference throughput per model.
-
-Queue depth and processing times.
-
-Model load/unload times.
-
-Errors (inference failures, invalid inputs, network issues).
-
-Distributed Tracing (Internal): Instrument GoEdgeInfer's internal components with OpenTelemetry to provide end-to-end tracing of an inference request, from API ingestion to model execution and result return. This helps debug the agent itself.
-
-Structured Logging: Use a structured logging library (e.g., zap) for all logs, making them easy to parse and analyze by log aggregation systems.
-
-Remote Log/Metric Export: Configure the agent to push logs and metrics to a remote observability platform (e.g., Prometheus remote write, Loki, Splunk, custom HTTP endpoint) in addition to exposing a local endpoint.
-
-4.8. Configuration & Remote Management (New/Expanded)
-Dynamic Configuration: Allow configuration updates without restarting the agent (e.g., via a control plane API or by monitoring a configuration file).
-
-Remote Update Mechanism: Implement a secure mechanism for remote over-the-air (OTA) updates of the GoEdgeInfer binary itself, crucial for large-scale edge deployments. This would involve secure channels, signature verification, and rollback capabilities.
-
-Integration with Edge Orchestration: Design for integration with existing edge orchestration platforms (e.g., K3s, AWS IoT Greengrass, Azure IoT Edge, Fleet Commander) for centralized deployment, monitoring, and management.
-
-4.9. Security (New/Expanded)
-API Authentication & Authorization: Implement API keys, JWTs, or mTLS for securing the inference API.
-
-Model Integrity: Verify model checksums and digital signatures upon loading to prevent tampering.
-
-Data Privacy: Ensure sensitive data is handled securely, potentially with in-memory encryption for intermediate processing.
-
-Least Privilege: Ensure the agent runs with the minimum necessary permissions.
-
-Secure Boot Integration: For dedicated edge hardware, explore integration with secure boot mechanisms to ensure only trusted software runs.
-
-5. Project Roadmap (Refined Phases)
-Phase 1: Core Inference Engine (MVP) (As originally planned, but with a focus on laying groundwork for future features)
-
-Basic ONNX model loading and inference using CGO bindings to ONNX Runtime.
-
-Simple HTTP REST API for submitting inference requests with basic input validation.
-
-Basic in-memory buffering for requests.
-
-Configuration management (YAML file) for model path and API port.
-
-Structured logging.
-
-Unit tests for core inference logic.
-
-Phase 2: Robustness, Metrics, and Basic Pre/Post-processing
-
-Implement gRPC API for inference requests.
-
-Add configurable, Go-native basic pre/post-processing capabilities (e.g., image resizing, normalization, label mapping).
-
-Expose comprehensive agent metrics (inference latency, throughput, queue depth) via a Prometheus /metrics endpoint.
-
-Implement basic system health monitoring (CPU, memory usage of the agent).
-
-Enhanced error handling and retry mechanisms for inference and external communication.
-
-Implement a lightweight, disk-backed persistent buffer for inference requests/results.
-
-Phase 3: Advanced Model Management & Remote Capabilities
-
-Support for dynamic model loading/unloading (hot-reloading) via API or config change.
-
-Integration with remote model registries (S3-compatible) with authentication.
-
-Implement internal distributed tracing using OpenTelemetry.
-
-Develop a basic CLI for agent management (start, stop, status, model info, config reload).
-
-Initial implementation of secure remote configuration and agent binary updates.
-
-Comprehensive documentation and examples for common ML models and pre/post-processing pipelines.
-
-Phase 4: Hardware Acceleration & Edge Orchestration Integration
-
-Full support for configurable ONNX Runtime execution providers (e.g., CUDA, OpenVINO, TensorRT).
-
-Advanced pre/post-processing extensibility (e.g., simple plugin system).
-
-Deeper integration with a chosen edge orchestration platform for seamless deployment and lifecycle management.
-
-Enhanced security features (e.g., model signature verification, API authorization).
-
-Consideration for model quantization/pruning integration.
-
-6. Getting Started for Developers
-Repository Setup: Create a new Go module.
-
-Project Structure:
-
-go-edgeinfer/
-├── cmd/             # Main entry point for the agent
-│   └── main.go
-├── internal/        # Internal packages
-│   ├── config/      # Configuration loading and parsing
-│   ├── api/         # HTTP/gRPC server for inference requests, rate limiting, validation
-│   ├── model/       # Model loading, management, versioning, integrity checks
-│   ├── runtime/     # CGO bindings and interaction with ONNX Runtime, execution providers
-│   ├── processing/  # Pre/Post-processing logic, extensible pipeline
-│   ├── persistence/ # Disk-backed buffering for requests/results
-│   ├── health/      # System/agent health monitoring, metrics collection
-│   ├── security/    # Authentication, authorization, model integrity
-│   └── manager/     # Remote management, updates, orchestration integration
-├── proto/           # Protobuf definitions for gRPC API
-├── configs/         # Example configuration files
-├── Dockerfile
-├── go.mod
-├── go.sum
-└── README.md
-
-Set up CGO Environment: This is critical if using ONNX Runtime. Ensure the ONNX Runtime C/C++ library is available and linked correctly during Go compilation. This often involves setting CGO_ENABLED=1 and LD_FLAGS or CGO_LDFLAGS for target architectures.
-
-Define gRPC Protobufs: Create infer.proto in the proto/ directory with detailed request/response structures and generate Go code using protoc.
-
-Implement Model Runtime: Start with basic ONNX model loading and inference calls in internal/runtime using CGO, focusing on robust error handling.
-
-Implement Inference API: Create the HTTP and/or gRPC server in internal/api to receive inference requests, including input validation and request queuing.
-
-Configuration: Use viper to load comprehensive configuration in internal/config.
-
-Main Function: Tie everything together in cmd/main.go, orchestrating the lifecycle of all components.
-
-7. Future Considerations (Even Further)
-Model Compression & Optimization Tools: Integrate or provide utilities for on-device model optimization (e.g., pruning, quantization-aware training, graph optimizations) before deployment.
-
-Explainable AI (XAI) at the Edge: Explore lightweight techniques to provide basic model explainability (e.g., feature importance) directly at the edge, if feasible with resource constraints.
-
-Reinforcement Learning Agents: Extend GoEdgeInfer to host and execute reinforcement learning policies for autonomous decision-making.
-
-Sensor Fusion & Data Aggregation: Built-in capabilities for aggregating data from multiple sensors before inference.
-
-Offline Training/Retraining: Limited, on-device model retraining capabilities for adaptive models, using techniques like transfer learning or federated learning.
-
-Digital Twin Integration: Seamless integration with digital twin platforms for real-time model updates and state synchronization.
-
-This enhanced blueprint significantly expands on the initial concept, providing a much more detailed and ambitious vision for GoEdgeInfer. It focuses on resilience, advanced management, and deeper integration into the edge AI ecosystem, making it a truly powerful tool for developers.
+`docs/benchmarks.md` (new, B6): tokens/sec, TTFT, peak RSS for reference
+models on reference hardware, re-run per release. This file is marketing —
+treat it accordingly.

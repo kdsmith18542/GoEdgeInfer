@@ -1,39 +1,33 @@
-# GoEdgeInfer CLI (`goedgeinferctl`)
+# `goedgeinferctl`
 
-A command-line tool for managing GoEdgeInfer models, cache, and remote registry.
-
-## Usage
-
-```
+```sh
 goedgeinferctl --server <url> --apikey <key> <command> [args...]
-
-# Or set environment variables:
+# or:
 export GOEDGEINFER_SERVER=http://localhost:8080
 export GOEDGEINFER_APIKEY=yourkey
-goedgeinferctl <command> [args...]
 ```
 
-## Commands
-- `list-models` — List loaded models
-- `load-model <model_id> <model_path> [version]` — Load a model
-- `unload-model <model_id>` — Unload a model
-- `reload` — Reload config and pipeline
-- `list-remote` — List models in remote S3/MinIO registry
-- `upload-remote <local_path> <object_key>` — Upload a model to remote registry
-- `delete-remote <object_key>` — Delete a model from remote registry
-- `cleanup-cache <cache_dir> <keep1> [keep2 ...]` — Clean up local cache, keeping only specified files
+> **Known bug (plan.md A9):** the CLI's request paths don't match the
+> server's `/api/v1` routes, and `--server`/`--apikey` flags are silently
+> ignored (only env vars reach requests). The table below documents the
+> **intended** contract — the server (`internal/api/router.go`) is source of
+> truth. Fix the CLI before trusting this doc.
 
-## Examples
+| Command | Maps to |
+|---|---|
+| `list-models` | `GET /api/v1/models` |
+| `load-model <id> <path> [version]` | `POST /api/v1/models` |
+| `unload-model <id>` | `DELETE /api/v1/models/:id` |
+| `reload` | `POST /api/v1/mgmt/system/reload` |
+| `list-remote` | `GET /api/v1/mgmt/remote/models` |
+| `upload-remote <local> <key>` | `POST /api/v1/mgmt/remote/upload` |
+| `delete-remote <key>` | `POST /api/v1/mgmt/remote/delete` |
+| `cleanup-cache <dir> <keep…>` | `POST /api/v1/mgmt/remote/cleanup` |
+| `batch-infer <jsonl> <model> [version] [json\|table\|quiet]` | `POST /api/v1/infer/:model` per line |
+| `jwt generate <secret> <alg> <iss> <aud> <role> <scope> [expire_min]` | local JWT mint (HS256) |
+| `jwt validate <token> <secret> <alg>` | local JWT check |
 
-```
-goedgeinferctl list-models
-goedgeinferctl load-model mnist /tmp/mnist.onnx v1
-goedgeinferctl unload-model mnist
-goedgeinferctl reload
-goedgeinferctl list-remote
-goedgeinferctl upload-remote /tmp/mnist.onnx mnist.onnx
-goedgeinferctl delete-remote mnist.onnx
-goedgeinferctl cleanup-cache /tmp/modelcache /tmp/modelcache/mnist.onnx
-```
+## Contract test (required by A9)
 
-All commands require a valid API key.
+Boot the server, run every command above against it, assert success. This
+test is the reason the CLI/server drift happened — there wasn't one.
